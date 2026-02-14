@@ -579,23 +579,23 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                     "timeout_seconds": challenge.timeout_seconds,
                     "challenge_number": challenge_sequence.challenges.index(challenge) + 1,
                     "total_challenges": len(challenge_sequence.challenges),
-                    "prep_time_seconds": 3
+                    "prep_time_seconds": 1.5
                 }
             )
             
             # === HUMAN REACTION TIME BUDGET ===
-            # Give the user time to read, comprehend, and prepare (3 seconds)
+            # Give the user time to read, comprehend, and prepare (1.5 seconds)
             # During this time, drain any stale frames so they don't pollute detection
             await _send_feedback(
                 websocket,
                 FeedbackType.SCORE_UPDATE,
                 f"Get ready to: {challenge.instruction}",
-                {"countdown": 3, "status": "preparing", "instruction": challenge.instruction}
+                {"countdown": 1.5, "status": "preparing", "instruction": challenge.instruction}
             )
             
             # Drain any frames sent during the countdown so they don't count
             # Use a clean async sleep with periodic drain to avoid blocking
-            drain_duration = 3.0
+            drain_duration = 1.5
             drain_start = time.time()
             while time.time() - drain_start < drain_duration:
                 remaining = drain_duration - (time.time() - drain_start)
@@ -703,8 +703,8 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                                         }
                                     )
                                 
-                                # Collect frames for ~5 seconds (at 30 FPS = 150 frames)
-                                if len(challenge_frames) >= 150:
+                                # Collect frames for ~3 seconds (at 30 FPS = 90 frames)
+                                if len(challenge_frames) >= 90:
                                     break
                             else:
                                 if len(challenge_frames) == 0:
@@ -796,7 +796,7 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                 )
                 
                 # Brief pause between challenges so user can see result and rest
-                await asyncio.sleep(2.0)
+                await asyncio.sleep(1.0)
             else:
                 # No frames received - mark as failed
                 challenge_result = ChallengeResult(
@@ -833,17 +833,20 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                     {"challenge_id": challenge.challenge_id}
                 )
         
-        # Check if minimum challenges completed (Requirement 4.5)
-        min_required = 4
+        # Check if minimum challenges completed (75% pass rate required)
+        # e.g. 6/8 challenges or 3/4 challenges
+        total_challenges = len(challenge_sequence.challenges)
+        min_required = max(1, int(total_challenges * 0.75))
         if completed_count < min_required:
             session_manager.terminate_session(session_id, "failed")
             await _send_feedback(
                 websocket,
                 FeedbackType.VERIFICATION_FAILED,
-                f"Verification failed. Only {completed_count} of {min_required} challenges completed.",
+                f"Verification failed. Only {completed_count}/{total_challenges} challenges passed (need {min_required}).",
                 {
                     "completed_count": completed_count,
                     "required_count": min_required,
+                    "total_challenges": total_challenges,
                     "final_score": 0.0,
                     "passed": False
                 }
@@ -1050,6 +1053,11 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
             # Mark session as completed
             session_manager.terminate_session(session_id, "completed")
             
+            # Generate a unique blockchain verification ID for this user
+            # This ID is tied to the blockchain block and expires with the token (15 min)
+            blockchain_id = f"SNTL-{uuid.uuid4().hex[:8].upper()}-{uuid.uuid4().hex[:4].upper()}"
+            chain_stats = blockchain_ledger.get_chain_stats()
+            
             # Send success feedback
             await _send_feedback(
                 websocket,
@@ -1057,14 +1065,19 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                 "Verification successful!",
                 {
                     "token": token,
+                    "blockchain_id": blockchain_id,
                     "final_score": scoring_result.final_score,
                     "liveness_score": scoring_result.liveness_score,
                     "emotion_score": scoring_result.emotion_score,
                     "deepfake_score": scoring_result.deepfake_score,
+                    "completed_challenges": completed_count,
+                    "total_challenges": len(challenge_sequence.challenges),
                     "expires_in_minutes": token_issuer.TOKEN_EXPIRY_MINUTES,
                     "blockchain": {
-                        "block_count": blockchain_ledger.get_chain_stats()["total_blocks"],
-                        "chain_hash": blockchain_ledger.get_chain_stats()["chain_hash"],
+                        "blockchain_id": blockchain_id,
+                        "block_index": chain_stats["total_blocks"] - 1,
+                        "block_count": chain_stats["total_blocks"],
+                        "chain_hash": chain_stats["chain_hash"],
                         "ledger_url": "/blockchain"
                     }
                 }
@@ -1084,7 +1097,9 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                     "threshold": scoring_engine.THRESHOLD,
                     "liveness_score": scoring_result.liveness_score,
                     "emotion_score": scoring_result.emotion_score,
-                    "deepfake_score": scoring_result.deepfake_score
+                    "deepfake_score": scoring_result.deepfake_score,
+                    "completed_challenges": completed_count,
+                    "total_challenges": len(challenge_sequence.challenges)
                 }
             )
             

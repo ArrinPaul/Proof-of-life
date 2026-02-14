@@ -116,7 +116,7 @@ class ChallengeEngine:
                 challenge_id=challenge_id,
                 type=challenge_type,
                 instruction=instruction,
-                timeout_seconds=20
+                timeout_seconds=8
             )
             challenges.append(challenge)
         

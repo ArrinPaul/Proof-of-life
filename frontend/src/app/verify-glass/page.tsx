@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAuth, useUser } from '@clerk/nextjs'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -10,6 +10,22 @@ import { apiClient } from '@/lib/api'
 import { WebSocketClient, FeedbackMessage } from '@/lib/websocket'
 import { CameraCapture } from '@/lib/camera'
 
+/* ── animated number counter ── */
+function AnimatedNumber({ value, suffix = '%' }: { value: number; suffix?: string }) {
+  const [display, setDisplay] = useState(0)
+  useEffect(() => {
+    if (value <= 0) { setDisplay(0); return }
+    const start = performance.now()
+    const tick = (now: number) => {
+      const t = Math.min((now - start) / 1200, 1)
+      setDisplay(Math.round((1 - Math.pow(1 - t, 3)) * value))
+      if (t < 1) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  }, [value])
+  return <>{display}{suffix}</>
+}
+
 export default function VerifyGlassPage() {
   const { isLoaded, userId, getToken } = useAuth()
   const { user } = useUser()
@@ -18,12 +34,16 @@ export default function VerifyGlassPage() {
   const [progress, setProgress] = useState(0)
   const [currentChallenge, setCurrentChallenge] = useState<string>('')
   const [completedChallenges, setCompletedChallenges] = useState(0)
-  const [totalChallenges, setTotalChallenges] = useState(3)
+  const [totalChallenges, setTotalChallenges] = useState(8)
   const [scores, setScores] = useState({ liveness: 0, emotion: 0, deepfake: 0 })
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
+  const [blockchainId, setBlockchainId] = useState<string | null>(null)
+  const [blockchainInfo, setBlockchainInfo] = useState<any>(null)
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [finalScore, setFinalScore] = useState<number>(0)
+  const [expiresIn, setExpiresIn] = useState<number>(15)
+  const [showResult, setShowResult] = useState(false)
 
   // Refs for WebSocket and Camera instances
   const wsClientRef = useRef<WebSocketClient | null>(null)
@@ -164,9 +184,18 @@ export default function VerifyGlassPage() {
       case 'verification_success':
         setStep('success')
         setToken(message.data?.token || null)
+        setBlockchainId(message.data?.blockchain_id || null)
+        setBlockchainInfo(message.data?.blockchain || null)
         setFinalScore(message.data?.final_score || 0)
+        setExpiresIn(message.data?.expires_in_minutes || 15)
+        setScores({
+          liveness: message.data?.liveness_score || 0,
+          emotion: message.data?.emotion_score || 0,
+          deepfake: message.data?.deepfake_score || 0,
+        })
         setProgress(100)
-        setCompletedChallenges(totalChallenges)
+        setCompletedChallenges(message.data?.completed_challenges || totalChallenges)
+        setTimeout(() => setShowResult(true), 500)
         cleanup()
         break
 
@@ -174,6 +203,13 @@ export default function VerifyGlassPage() {
         setStep('error')
         setErrorMessage(message.data?.reason || message.message || 'Verification failed. Please try again.')
         setFinalScore(message.data?.final_score || 0)
+        setScores({
+          liveness: message.data?.liveness_score || 0,
+          emotion: message.data?.emotion_score || 0,
+          deepfake: message.data?.deepfake_score || 0,
+        })
+        setCompletedChallenges(message.data?.completed_challenges || completedChallenges)
+        setTimeout(() => setShowResult(true), 500)
         cleanup()
         break
 
@@ -222,8 +258,12 @@ export default function VerifyGlassPage() {
     setScores({ liveness: 0, emotion: 0, deepfake: 0 })
     setSessionId(null)
     setToken(null)
+    setBlockchainId(null)
+    setBlockchainInfo(null)
     setErrorMessage('')
     setFinalScore(0)
+    setExpiresIn(15)
+    setShowResult(false)
   }
 
   return (
@@ -268,6 +308,8 @@ export default function VerifyGlassPage() {
               status={step}
               scores={step === 'scanning' ? scores : undefined}
               currentChallenge={step === 'scanning' ? currentChallenge : undefined}
+              completedChallenges={completedChallenges}
+              totalChallenges={totalChallenges}
             />
           </GlassCard>
 
@@ -361,9 +403,9 @@ export default function VerifyGlassPage() {
                 <h3 className="font-mono text-[10px] tracking-[0.2em] uppercase text-ink-400 mb-4">Live Telemetry</h3>
                 <div className="space-y-3">
                   {[
-                    { label: 'Liveness', value: Math.min(progress * 0.8, 85), color: 'bg-neon-green' },
-                    { label: 'Emotion', value: Math.min(progress * 0.7, 75), color: 'bg-neon-purple' },
-                    { label: 'Deepfake', value: Math.min(progress * 0.9, 92), color: 'bg-neon-cyan' },
+                    { label: 'Liveness', value: scores.liveness * 100, color: 'bg-neon-green' },
+                    { label: 'Emotion', value: scores.emotion * 100, color: 'bg-neon-purple' },
+                    { label: 'Deepfake', value: scores.deepfake * 100, color: 'bg-neon-cyan' },
                   ].map((score) => (
                     <div key={score.label}>
                       <div className="flex justify-between text-xs font-mono mb-1.5">
@@ -381,62 +423,294 @@ export default function VerifyGlassPage() {
               </GlassCard>
             )}
 
-            {/* Success message */}
-            {step === 'success' && (
-              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}>
-                <GlassCard className="p-6" glow="green">
-                  <div className="text-center space-y-4">
+            {/* Success Result */}
+            {step === 'success' && showResult && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+                className="space-y-4"
+              >
+                {/* Blockchain ID Hero */}
+                <GlassCard className="p-6 relative overflow-hidden" glow="green">
+                  {/* Animated background pulse */}
+                  <motion.div
+                    className="absolute inset-0 bg-gradient-to-b from-neon-green/[0.04] to-transparent"
+                    animate={{ opacity: [0.3, 0.6, 0.3] }}
+                    transition={{ duration: 3, repeat: Infinity }}
+                  />
+                  <div className="relative z-10 text-center space-y-4">
+                    {/* Verified badge */}
                     <motion.div
-                      className="w-14 h-14 mx-auto flex items-center justify-center bg-neon-green/[0.08] border border-neon-green/20"
-                      style={{ borderRadius: '2px' }}
-                      animate={{ scale: [1, 1.08, 1] }} transition={{ duration: 0.5 }}>
-                      <svg className="w-7 h-7 text-neon-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                      </svg>
-                    </motion.div>
-                    <div>
-                      <h3 className="font-display text-2xl font-bold text-ink-100 mb-2">Identity Verified</h3>
-                      <p className="text-ink-400 text-sm font-mono">
-                        Authentication token issued. Access granted.
-                      </p>
-                    </div>
-                    <div className="pt-3 border-t border-white/[0.06]">
-                      <p className="text-[10px] font-mono text-ink-500 tracking-wider">Score: {Math.round(finalScore * 100)}%</p>
-                      {token && (
-                        <p className="text-[10px] font-mono text-ink-600 mt-1 break-all">Token: {token.substring(0, 24)}...</p>
-                      )}
-                    </div>
-                  </div>
-                </GlassCard>
-              </motion.div>
-            )}
-
-            {/* Error message */}
-            {step === 'error' && (
-              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}>
-                <GlassCard className="p-6" glow="red">
-                  <div className="text-center space-y-4">
-                    <motion.div
-                      className="w-14 h-14 mx-auto flex items-center justify-center bg-neon-red/[0.08] border border-neon-red/20"
-                      style={{ borderRadius: '2px' }}
-                      animate={{ scale: [1, 1.08, 1] }} transition={{ duration: 0.5 }}>
-                      <svg className="w-7 h-7 text-neon-red" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </motion.div>
-                    <div>
-                      <h3 className="font-display text-2xl font-bold text-ink-100 mb-2">Verification Failed</h3>
-                      <p className="text-ink-400 text-sm font-mono">
-                        {errorMessage || 'Unable to verify identity. Retry recommended.'}
-                      </p>
-                    </div>
-                    {finalScore > 0 && (
-                      <div className="pt-3 border-t border-white/[0.06]">
-                        <p className="text-[10px] font-mono text-ink-500 tracking-wider">Score: {Math.round(finalScore * 100)}%</p>
+                      className="relative w-16 h-16 mx-auto"
+                      initial={{ scale: 0, rotate: -180 }}
+                      animate={{ scale: 1, rotate: 0 }}
+                      transition={{ type: 'spring', stiffness: 200, damping: 15, delay: 0.2 }}
+                    >
+                      <motion.div
+                        className="absolute inset-0 border-2 border-neon-green/40"
+                        style={{ borderRadius: '2px' }}
+                        animate={{ boxShadow: ['0 0 0px rgba(0,255,136,0.2)', '0 0 20px rgba(0,255,136,0.4)', '0 0 0px rgba(0,255,136,0.2)'] }}
+                        transition={{ duration: 2, repeat: Infinity }}
+                      />
+                      <div className="w-full h-full flex items-center justify-center bg-neon-green/[0.08]">
+                        <svg className="w-8 h-8 text-neon-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                        </svg>
                       </div>
+                    </motion.div>
+
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.4 }}
+                    >
+                      <h3 className="font-display text-2xl font-bold text-neon-green tracking-wide">IDENTITY VERIFIED</h3>
+                      <p className="text-ink-500 text-[10px] font-mono tracking-[0.2em] uppercase mt-1">Proof-of-Life Confirmed</p>
+                    </motion.div>
+
+                    {/* Blockchain ID */}
+                    {blockchainId && (
+                      <motion.div
+                        className="mt-4 p-4 bg-void-100/60 border border-neon-green/20"
+                        style={{ borderRadius: '2px' }}
+                        initial={{ opacity: 0, scaleX: 0 }}
+                        animate={{ opacity: 1, scaleX: 1 }}
+                        transition={{ delay: 0.6, duration: 0.4 }}
+                      >
+                        <p className="text-[9px] font-mono text-ink-500 tracking-[0.3em] uppercase mb-2">Blockchain Identity</p>
+                        <motion.p
+                          className="text-lg font-mono font-bold text-neon-green tracking-wider"
+                          animate={{ textShadow: ['0 0 4px rgba(0,255,136,0.3)', '0 0 12px rgba(0,255,136,0.6)', '0 0 4px rgba(0,255,136,0.3)'] }}
+                          transition={{ duration: 2.5, repeat: Infinity }}
+                        >
+                          {blockchainId}
+                        </motion.p>
+                        <p className="text-[9px] font-mono text-ink-600 mt-2">Registered on Sentinel Ledger</p>
+                      </motion.div>
                     )}
                   </div>
                 </GlassCard>
+
+                {/* Score Breakdown */}
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.8 }}
+                >
+                  <GlassCard className="p-5">
+                    <h4 className="font-mono text-[10px] tracking-[0.2em] uppercase text-ink-400 mb-4">Score Breakdown</h4>
+                    <div className="space-y-3">
+                      {[
+                        { label: 'Liveness', value: scores.liveness * 100, color: 'bg-neon-green', delay: 0.9 },
+                        { label: 'Emotion', value: scores.emotion * 100, color: 'bg-neon-purple', delay: 1.0 },
+                        { label: 'Deepfake', value: scores.deepfake * 100, color: 'bg-neon-cyan', delay: 1.1 },
+                      ].map((s) => (
+                        <motion.div
+                          key={s.label}
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: s.delay }}
+                        >
+                          <div className="flex justify-between text-xs font-mono mb-1.5">
+                            <span className="text-ink-500 tracking-wider">{s.label}</span>
+                            <span className="text-ink-200 font-bold"><AnimatedNumber value={Math.round(s.value)} />%</span>
+                          </div>
+                          <div className="h-1 bg-white/[0.06] overflow-hidden" style={{ borderRadius: '1px' }}>
+                            <motion.div
+                              className={`h-full ${s.color}`}
+                              initial={{ width: '0%' }}
+                              animate={{ width: `${s.value}%` }}
+                              transition={{ delay: s.delay, duration: 0.8, ease: 'easeOut' }}
+                              style={{ boxShadow: '0 0 8px currentColor' }}
+                            />
+                          </div>
+                        </motion.div>
+                      ))}
+
+                      {/* Final score */}
+                      <motion.div
+                        className="pt-3 mt-3 border-t border-white/[0.06]"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 1.2 }}
+                      >
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs font-mono text-ink-400 tracking-wider">FINAL SCORE</span>
+                          <motion.span
+                            className="text-xl font-display font-bold text-neon-green"
+                            animate={{ textShadow: ['0 0 0px rgba(0,255,136,0)', '0 0 8px rgba(0,255,136,0.5)', '0 0 0px rgba(0,255,136,0)'] }}
+                            transition={{ duration: 2, repeat: Infinity }}
+                          >
+                            <AnimatedNumber value={Math.round(finalScore * 100)} />%
+                          </motion.span>
+                        </div>
+                      </motion.div>
+                    </div>
+                  </GlassCard>
+                </motion.div>
+
+                {/* Blockchain & Expiry Info */}
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 1.3 }}
+                >
+                  <GlassCard className="p-5">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-[9px] font-mono text-ink-600 tracking-[0.2em] uppercase">Challenges</p>
+                        <p className="text-sm font-mono text-ink-200 mt-1 font-bold">{completedChallenges} / {totalChallenges}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-mono text-ink-600 tracking-[0.2em] uppercase">Expires In</p>
+                        <p className="text-sm font-mono text-neon-cyan mt-1 font-bold">{expiresIn} min</p>
+                      </div>
+                      {blockchainInfo && (
+                        <>
+                          <div>
+                            <p className="text-[9px] font-mono text-ink-600 tracking-[0.2em] uppercase">Chain Length</p>
+                            <p className="text-sm font-mono text-ink-200 mt-1 font-bold">{blockchainInfo.chain_length || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-[9px] font-mono text-ink-600 tracking-[0.2em] uppercase">Block Hash</p>
+                            <p className="text-[10px] font-mono text-ink-400 mt-1 truncate">{blockchainInfo.block_hash?.substring(0, 16) || '—'}…</p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    {token && (
+                      <div className="mt-4 pt-3 border-t border-white/[0.06]">
+                        <p className="text-[9px] font-mono text-ink-600 tracking-[0.2em] uppercase mb-1">JWT Token</p>
+                        <p className="text-[10px] font-mono text-ink-500 break-all leading-relaxed">{token.substring(0, 60)}…</p>
+                      </div>
+                    )}
+                  </GlassCard>
+                </motion.div>
+              </motion.div>
+            )}
+
+            {/* Error Result */}
+            {step === 'error' && showResult && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+                className="space-y-4"
+              >
+                <GlassCard className="p-6 relative overflow-hidden" glow="red">
+                  <motion.div
+                    className="absolute inset-0 bg-gradient-to-b from-neon-red/[0.04] to-transparent"
+                    animate={{ opacity: [0.3, 0.5, 0.3] }}
+                    transition={{ duration: 3, repeat: Infinity }}
+                  />
+                  <div className="relative z-10 text-center space-y-4">
+                    <motion.div
+                      className="relative w-16 h-16 mx-auto"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ type: 'spring', stiffness: 200, damping: 15, delay: 0.2 }}
+                    >
+                      <motion.div
+                        className="absolute inset-0 border-2 border-neon-red/40"
+                        style={{ borderRadius: '2px' }}
+                        animate={{ boxShadow: ['0 0 0px rgba(255,50,50,0.2)', '0 0 20px rgba(255,50,50,0.4)', '0 0 0px rgba(255,50,50,0.2)'] }}
+                        transition={{ duration: 2, repeat: Infinity }}
+                      />
+                      <div className="w-full h-full flex items-center justify-center bg-neon-red/[0.08]">
+                        <svg className="w-8 h-8 text-neon-red" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </div>
+                    </motion.div>
+
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+                      <h3 className="font-display text-2xl font-bold text-neon-red tracking-wide">VERIFICATION FAILED</h3>
+                      <p className="text-ink-500 text-[10px] font-mono tracking-[0.2em] uppercase mt-1">Identity Could Not Be Confirmed</p>
+                      {errorMessage && (
+                        <p className="text-ink-400 text-xs font-mono mt-3">{errorMessage}</p>
+                      )}
+                    </motion.div>
+                  </div>
+                </GlassCard>
+
+                {/* Failed Score Breakdown */}
+                {finalScore > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.6 }}
+                  >
+                    <GlassCard className="p-5">
+                      <h4 className="font-mono text-[10px] tracking-[0.2em] uppercase text-ink-400 mb-4">Score Analysis</h4>
+                      <div className="space-y-3">
+                        {[
+                          { label: 'Liveness', value: scores.liveness * 100, color: 'bg-neon-green', threshold: 65 },
+                          { label: 'Emotion', value: scores.emotion * 100, color: 'bg-neon-purple', threshold: 50 },
+                          { label: 'Deepfake', value: scores.deepfake * 100, color: 'bg-neon-cyan', threshold: 60 },
+                        ].map((s, i) => (
+                          <motion.div
+                            key={s.label}
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: 0.7 + i * 0.1 }}
+                          >
+                            <div className="flex justify-between text-xs font-mono mb-1.5">
+                              <span className="text-ink-500 tracking-wider">
+                                {s.label}
+                                {s.value < s.threshold && (
+                                  <span className="text-neon-red/70 ml-2">⚠ LOW</span>
+                                )}
+                              </span>
+                              <span className={`font-bold ${s.value < s.threshold ? 'text-neon-red' : 'text-ink-200'}`}>
+                                {Math.round(s.value)}%
+                              </span>
+                            </div>
+                            <div className="h-1 bg-white/[0.06] overflow-hidden" style={{ borderRadius: '1px' }}>
+                              <motion.div
+                                className={`h-full ${s.value < s.threshold ? 'bg-neon-red' : s.color}`}
+                                initial={{ width: '0%' }}
+                                animate={{ width: `${s.value}%` }}
+                                transition={{ delay: 0.7 + i * 0.1, duration: 0.8, ease: 'easeOut' }}
+                              />
+                            </div>
+                          </motion.div>
+                        ))}
+
+                        <motion.div
+                          className="pt-3 mt-3 border-t border-white/[0.06]"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 1.0 }}
+                        >
+                          <div className="flex justify-between items-center">
+                            <span className="text-xs font-mono text-ink-400 tracking-wider">FINAL SCORE</span>
+                            <span className="text-xl font-display font-bold text-neon-red">{Math.round(finalScore * 100)}%</span>
+                          </div>
+                          <p className="text-[9px] font-mono text-ink-600 mt-2">Minimum 65% required to pass</p>
+                        </motion.div>
+                      </div>
+                    </GlassCard>
+                  </motion.div>
+                )}
+
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 1.1 }}
+                >
+                  <GlassCard className="p-4">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 flex items-center justify-center bg-neon-cyan/[0.06] border border-neon-cyan/10" style={{ borderRadius: '2px' }}>
+                        <span className="text-neon-cyan text-xs font-mono">i</span>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-mono text-ink-400">Challenges passed: {completedChallenges} / {totalChallenges}</p>
+                        <p className="text-[10px] font-mono text-ink-500 mt-0.5">Ensure good lighting and face the camera directly</p>
+                      </div>
+                    </div>
+                  </GlassCard>
+                </motion.div>
               </motion.div>
             )}
 
