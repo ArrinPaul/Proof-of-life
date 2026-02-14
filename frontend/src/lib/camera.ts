@@ -11,7 +11,7 @@ export class CameraCapture {
   private canvasElement: HTMLCanvasElement | null = null;
   private canvasContext: CanvasRenderingContext2D | null = null;
   private captureInterval: NodeJS.Timeout | null = null;
-  private frameRate: number = 10; // Default 10 FPS
+  private frameRate: number = 30; // Default 30 FPS
 
   /**
    * Request camera permissions and start video stream

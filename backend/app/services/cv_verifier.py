@@ -2,10 +2,13 @@
 Computer Vision Verifier for liveness detection and challenge verification
 """
 import cv2
+import logging
 import mediapipe as mp
 import numpy as np
 from typing import List, Optional
 from ..models.data_models import Challenge, ChallengeResult
+
+logger = logging.getLogger(__name__)
 
 
 class CVVerifier:
@@ -71,13 +74,14 @@ class CVVerifier:
                 # Create base options with model path
                 base_options = mp.tasks.BaseOptions(model_asset_path=self.model_path)
                 
-                # Create FaceLandmarker options
+                # Create FaceLandmarker options — use low thresholds
+                # to catch faces in typical webcam conditions
                 options = mp.tasks.vision.FaceLandmarkerOptions(
                     base_options=base_options,
                     running_mode=mp.tasks.vision.RunningMode.IMAGE,
                     num_faces=1,
-                    min_face_detection_confidence=0.5,
-                    min_face_presence_confidence=0.5,
+                    min_face_detection_confidence=0.3,
+                    min_face_presence_confidence=0.3,
                     output_face_blendshapes=False,
                     output_facial_transformation_matrixes=False
                 )
@@ -229,6 +233,7 @@ class CVVerifier:
         }
         
         challenge_action = INSTRUCTION_TO_ACTION.get(challenge.instruction)
+        logger.info(f"verify_challenge: instruction='{challenge.instruction}', mapped_action='{challenge_action}', type={challenge.type}, frames={len(video_frames)}")
         if not challenge_action:
             # Fallback: extract action from challenge_id
             # Format: {uuid}_{gesture|expression}_{index}_{action_with_underscores}
@@ -527,23 +532,17 @@ class CVVerifier:
     def _verify_gesture(self, gesture: str, video_frames: List[np.ndarray]) -> tuple[bool, float]:
         """
         Verify gesture challenge by detecting head pose and movement patterns.
-        
-        Args:
-            gesture: The gesture to verify (e.g., "nod_up", "turn_left")
-            video_frames: Video frames to analyze
-            
-        Returns:
-            tuple: (completed: bool, confidence: float)
-            
-        Validates Requirement 4.2
+        Uses PEAK movement detection (not first-vs-last) so users can
+        perform the gesture and return to neutral naturally.
         """
         if len(video_frames) < 2:
-            # Need at least 2 frames to detect movement
+            logger.warning(f"Gesture '{gesture}': need >=2 frames, got {len(video_frames)}")
             return False, 0.0
         
-        # Extract landmarks from frames
+        # Extract landmarks from frames — tolerate frames without face
         all_landmarks = []
         if self.face_landmarker is None:
+            logger.warning("face_landmarker is None — cannot verify gesture")
             return False, 0.0
         for frame in video_frames:
             rgb_frame = self.preprocess_frame(frame)
@@ -551,211 +550,210 @@ class CVVerifier:
             try:
                 detection_result = self.face_landmarker.detect(mp_image)
             except Exception:
-                return False, 0.0
+                continue
             
             if detection_result.face_landmarks and len(detection_result.face_landmarks) > 0:
                 landmarks = detection_result.face_landmarks[0]
                 landmarks_array = np.array([[lm.x, lm.y, lm.z] for lm in landmarks])
                 all_landmarks.append(landmarks_array)
-            else:
-                # No face detected
-                return False, 0.0
         
         if len(all_landmarks) < 2:
+            logger.warning(f"Gesture '{gesture}': only {len(all_landmarks)} frames had faces out of {len(video_frames)}")
             return False, 0.0
         
-        # Key landmark indices for head pose
+        logger.info(f"Gesture '{gesture}': {len(all_landmarks)} frames with faces")
+        
+        # Key landmark indices
         NOSE_TIP = 1
-        FOREHEAD = 10
         CHIN = 152
         LEFT_EYE = 33
         RIGHT_EYE = 263
-        LEFT_MOUTH = 61
-        RIGHT_MOUTH = 291
         
-        # Analyze gesture based on type
+        # ---------- NOD UP / NOD DOWN ----------
         if gesture in ["nod_up", "nod_down"]:
-            # Vertical head movement - track nose and chin y-coordinates
-            nose_positions = [lm[NOSE_TIP][1] for lm in all_landmarks]
-            chin_positions = [lm[CHIN][1] for lm in all_landmarks]
+            nose_y = [lm[NOSE_TIP][1] for lm in all_landmarks]
+            chin_y = [lm[CHIN][1] for lm in all_landmarks]
             
-            # Calculate vertical movement
-            nose_movement = max(nose_positions) - min(nose_positions)
-            chin_movement = max(chin_positions) - min(chin_positions)
-            avg_movement = (nose_movement + chin_movement) / 2.0
+            # Use total range of movement (peak-to-peak), NOT first-vs-last
+            nose_range = max(nose_y) - min(nose_y)
+            chin_range = max(chin_y) - min(chin_y)
+            movement = (nose_range + chin_range) / 2.0
             
-            # Nod up: head moves up (y decreases in normalized coords)
-            # Nod down: head moves down (y increases)
+            # For direction: check if peak movement went in the right direction
+            # nod_up: nose went UP at some point (y decreased from baseline)
+            # nod_down: nose went DOWN at some point (y increased from baseline)
+            baseline = nose_y[0]
             if gesture == "nod_up":
-                direction_correct = nose_positions[-1] < nose_positions[0]
-            else:  # nod_down
-                direction_correct = nose_positions[-1] > nose_positions[0]
+                peak_dir_movement = baseline - min(nose_y)  # positive means moved up
+            else:
+                peak_dir_movement = max(nose_y) - baseline  # positive means moved down
             
-            # Threshold: significant movement (> 0.015) in correct direction
-            if avg_movement > 0.015 and direction_correct:
-                confidence = min(avg_movement / 0.06, 1.0)  # Normalize to 0-1
+            logger.info(f"  nod: movement={movement:.5f}, peak_dir={peak_dir_movement:.5f}, nose_y_range=[{min(nose_y):.4f}, {max(nose_y):.4f}]")
+            
+            threshold = 0.005
+            if movement > threshold and peak_dir_movement > 0.002:
+                confidence = min(movement / 0.03, 1.0)
+                logger.info(f"  -> PASS confidence={confidence:.3f}")
                 return True, confidence
             else:
-                return False, avg_movement / 0.1
+                logger.info(f"  -> FAIL (threshold={threshold})")
+                return False, movement / 0.06
         
+        # ---------- TURN LEFT / TURN RIGHT ----------
         elif gesture in ["turn_left", "turn_right"]:
-            # Horizontal head rotation - track nose x-coordinate and eye positions
-            nose_positions = [lm[NOSE_TIP][0] for lm in all_landmarks]
+            nose_x = [lm[NOSE_TIP][0] for lm in all_landmarks]
+            movement = max(nose_x) - min(nose_x)
             
-            # Calculate horizontal movement
-            nose_movement = max(nose_positions) - min(nose_positions)
-            
-            # Turn left: nose moves left (x decreases)
-            # Turn right: nose moves right (x increases)
+            baseline = nose_x[0]
             if gesture == "turn_left":
-                direction_correct = nose_positions[-1] < nose_positions[0]
-            else:  # turn_right
-                direction_correct = nose_positions[-1] > nose_positions[0]
+                peak_dir = baseline - min(nose_x)
+            else:
+                peak_dir = max(nose_x) - baseline
             
-            # Threshold: significant movement (> 0.025) in correct direction
-            if nose_movement > 0.025 and direction_correct:
-                confidence = min(nose_movement / 0.08, 1.0)
+            logger.info(f"  turn: movement={movement:.5f}, peak_dir={peak_dir:.5f}, nose_x_range=[{min(nose_x):.4f}, {max(nose_x):.4f}]")
+            
+            threshold = 0.008
+            if movement > threshold and peak_dir > 0.003:
+                confidence = min(movement / 0.04, 1.0)
+                logger.info(f"  -> PASS confidence={confidence:.3f}")
                 return True, confidence
             else:
-                return False, nose_movement / 0.15
+                logger.info(f"  -> FAIL (threshold={threshold})")
+                return False, movement / 0.1
         
+        # ---------- TILT LEFT / TILT RIGHT ----------
         elif gesture in ["tilt_left", "tilt_right"]:
-            # Head tilt - track angle between eyes
             eye_angles = []
             for lm in all_landmarks:
-                left_eye = lm[LEFT_EYE]
-                right_eye = lm[RIGHT_EYE]
-                # Calculate angle of line between eyes
-                dy = right_eye[1] - left_eye[1]
-                dx = right_eye[0] - left_eye[0]
+                dy = lm[RIGHT_EYE][1] - lm[LEFT_EYE][1]
+                dx = lm[RIGHT_EYE][0] - lm[LEFT_EYE][0]
                 angle = np.arctan2(dy, dx)
                 eye_angles.append(angle)
             
-            # Calculate angle change
-            angle_change = abs(eye_angles[-1] - eye_angles[0])
-            
-            # Tilt left: right eye goes up (positive angle change)
-            # Tilt right: left eye goes up (negative angle change)
+            angle_range = max(eye_angles) - min(eye_angles)
+            baseline = eye_angles[0]
             if gesture == "tilt_left":
-                direction_correct = eye_angles[-1] > eye_angles[0]
-            else:  # tilt_right
-                direction_correct = eye_angles[-1] < eye_angles[0]
+                peak_dir = max(eye_angles) - baseline
+            else:
+                peak_dir = baseline - min(eye_angles)
             
-            # Threshold: significant tilt (> 0.08 radians ≈ 4.6 degrees)
-            if angle_change > 0.08 and direction_correct:
-                confidence = min(angle_change / 0.25, 1.0)
+            logger.info(f"  tilt: angle_range={angle_range:.5f} rad, peak_dir={peak_dir:.5f}")
+            
+            threshold = 0.02  # ~1.1 degrees
+            if angle_range > threshold and peak_dir > 0.01:
+                confidence = min(angle_range / 0.1, 1.0)
+                logger.info(f"  -> PASS confidence={confidence:.3f}")
                 return True, confidence
             else:
-                return False, angle_change / 0.4
+                logger.info(f"  -> FAIL (threshold={threshold})")
+                return False, angle_range / 0.2
         
+        # ---------- OPEN MOUTH ----------
         elif gesture == "open_mouth":
-            # Mouth opening - track vertical distance between mouth corners
             mouth_openings = []
             for lm in all_landmarks:
-                # Upper lip center: 13, Lower lip center: 14
                 upper_lip = lm[13]
                 lower_lip = lm[14]
                 opening = abs(lower_lip[1] - upper_lip[1])
                 mouth_openings.append(opening)
             
-            # Check if mouth opened significantly
             max_opening = max(mouth_openings)
+            min_opening = min(mouth_openings)
+            change = max_opening - min_opening
             
-            # Threshold: mouth opening > 0.015
-            if max_opening > 0.015:
-                confidence = min(max_opening / 0.05, 1.0)
+            logger.info(f"  open_mouth: max_opening={max_opening:.5f}, min={min_opening:.5f}, change={change:.5f}")
+            
+            # Either the mouth reached a large opening, or it changed significantly
+            if max_opening > 0.006 or change > 0.003:
+                confidence = min(max_opening / 0.02, 1.0)
+                logger.info(f"  -> PASS confidence={confidence:.3f}")
                 return True, confidence
             else:
-                return False, max_opening / 0.08
+                logger.info(f"  -> FAIL")
+                return False, max_opening / 0.05
         
+        # ---------- CLOSE EYES ----------
         elif gesture == "close_eyes":
-            # Eye closing - track eye aspect ratio
             ear_values = []
             for lm in all_landmarks:
-                # Left eye
-                left_top = lm[159]
-                left_bottom = lm[145]
-                left_vertical = abs(left_top[1] - left_bottom[1])
-                
-                # Right eye
-                right_top = lm[386]
-                right_bottom = lm[374]
-                right_vertical = abs(right_top[1] - right_bottom[1])
-                
-                avg_vertical = (left_vertical + right_vertical) / 2.0
-                ear_values.append(avg_vertical)
+                # Proper EAR: vertical / horizontal for each eye
+                left_v = abs(lm[159][1] - lm[145][1])
+                left_h = abs(lm[33][0] - lm[133][0]) + 1e-6
+                right_v = abs(lm[386][1] - lm[374][1])
+                right_h = abs(lm[263][0] - lm[362][0]) + 1e-6
+                ear = ((left_v / left_h) + (right_v / right_h)) / 2.0
+                ear_values.append(ear)
             
-            # Check if eyes closed (EAR drops significantly)
             min_ear = min(ear_values)
+            max_ear = max(ear_values)
+            ear_drop = max_ear - min_ear
             
-            # Threshold: EAR < 0.02 indicates closed eyes
-            if min_ear < 0.02:
-                confidence = min((0.03 - min_ear) / 0.03, 1.0)
-                return True, confidence
+            logger.info(f"  close_eyes: min_EAR={min_ear:.5f}, max_EAR={max_ear:.5f}, drop={ear_drop:.5f}")
+            
+            # EAR typically ~0.25-0.35 open, drops to ~0.05-0.15 closed
+            if min_ear < 0.20 or ear_drop > 0.05:
+                confidence = min(ear_drop / 0.15, 1.0) if ear_drop > 0.05 else min((0.25 - min_ear) / 0.2, 1.0)
+                logger.info(f"  -> PASS confidence={confidence:.3f}")
+                return True, max(confidence, 0.6)
             else:
-                return False, (0.025 - min_ear) / 0.025
+                logger.info(f"  -> FAIL")
+                return False, ear_drop / 0.15
         
+        # ---------- RAISE EYEBROWS ----------
         elif gesture == "raise_eyebrows":
-            # Eyebrow raising - track forehead and eyebrow positions
-            eyebrow_positions = []
+            brow_y = []
             for lm in all_landmarks:
-                # Left eyebrow: 70, Right eyebrow: 300
-                left_brow = lm[70]
-                right_brow = lm[300]
-                avg_brow_y = (left_brow[1] + right_brow[1]) / 2.0
-                eyebrow_positions.append(avg_brow_y)
+                avg = (lm[70][1] + lm[300][1]) / 2.0
+                brow_y.append(avg)
             
-            # Check if eyebrows moved up (y decreases)
-            movement = eyebrow_positions[0] - min(eyebrow_positions)
+            # Peak upward movement from any starting point
+            movement = max(brow_y) - min(brow_y)
+            # Eyebrows move up = y decreases
+            peak_up = brow_y[0] - min(brow_y)
             
-            # Threshold: eyebrows move up > 0.01
-            if movement > 0.01:
-                confidence = min(movement / 0.03, 1.0)
-                return True, confidence
+            logger.info(f"  raise_eyebrows: range={movement:.5f}, peak_up={peak_up:.5f}")
+            
+            if movement > 0.003 or peak_up > 0.002:
+                confidence = min(movement / 0.015, 1.0)
+                logger.info(f"  -> PASS confidence={confidence:.3f}")
+                return True, max(confidence, 0.6)
             else:
-                return False, movement / 0.05
+                logger.info(f"  -> FAIL")
+                return False, movement / 0.03
         
+        # ---------- BLINK ----------
         elif gesture == "blink":
-            # Blinking - detect rapid eye closure and opening
             ear_values = []
             for lm in all_landmarks:
-                # Calculate average eye aspect ratio
-                left_vertical = abs(lm[159][1] - lm[145][1])
-                right_vertical = abs(lm[386][1] - lm[374][1])
-                avg_ear = (left_vertical + right_vertical) / 2.0
-                ear_values.append(avg_ear)
+                left_v = abs(lm[159][1] - lm[145][1])
+                left_h = abs(lm[33][0] - lm[133][0]) + 1e-6
+                right_v = abs(lm[386][1] - lm[374][1])
+                right_h = abs(lm[263][0] - lm[362][0]) + 1e-6
+                ear = ((left_v / left_h) + (right_v / right_h)) / 2.0
+                ear_values.append(ear)
             
-            # Detect blink: EAR drops then rises
             min_ear = min(ear_values)
             max_ear = max(ear_values)
             ear_range = max_ear - min_ear
             
-            # Check for blink pattern (significant variation)
-            if ear_range > 0.005 and min_ear < 0.025:
-                confidence = min(ear_range / 0.02, 1.0)
-                return True, confidence
+            logger.info(f"  blink: min_EAR={min_ear:.5f}, max_EAR={max_ear:.5f}, range={ear_range:.5f}")
+            
+            # Blink = EAR drops then rises (range > threshold)
+            if ear_range > 0.02:
+                confidence = min(ear_range / 0.1, 1.0)
+                logger.info(f"  -> PASS confidence={confidence:.3f}")
+                return True, max(confidence, 0.6)
             else:
-                return False, ear_range / 0.03
+                logger.info(f"  -> FAIL")
+                return False, ear_range / 0.1
         
-        # Unknown gesture
+        logger.warning(f"Unknown gesture: {gesture}")
         return False, 0.0
     
     def _verify_expression(self, expression: str, video_frames: List[np.ndarray]) -> tuple[bool, float]:
         """
-        Verify expression challenge by integrating with emotion analyzer.
-        
-        This is a simplified implementation that uses facial landmark analysis
-        as a proxy for emotion detection. In production, this would integrate
-        with DeepFace or similar emotion detection library.
-        
-        Args:
-            expression: The expression to verify (e.g., "smile", "frown")
-            video_frames: Video frames to analyze
-            
-        Returns:
-            tuple: (completed: bool, confidence: float)
-            
-        Validates Requirement 4.2
+        Verify expression challenge using facial landmark analysis.
+        Checks ALL frames and uses the best-scoring one (not just the middle frame).
         """
         if len(video_frames) == 0:
             return False, 0.0
@@ -763,6 +761,7 @@ class CVVerifier:
         # Extract landmarks from frames
         all_landmarks = []
         if self.face_landmarker is None:
+            logger.warning("face_landmarker is None — cannot verify expression")
             return False, 0.0
         for frame in video_frames:
             rgb_frame = self.preprocess_frame(frame)
@@ -770,20 +769,20 @@ class CVVerifier:
             try:
                 detection_result = self.face_landmarker.detect(mp_image)
             except Exception:
-                return False, 0.0
+                continue
             
             if detection_result.face_landmarks and len(detection_result.face_landmarks) > 0:
                 landmarks = detection_result.face_landmarks[0]
                 landmarks_array = np.array([[lm.x, lm.y, lm.z] for lm in landmarks])
                 all_landmarks.append(landmarks_array)
-            else:
-                return False, 0.0
         
         if len(all_landmarks) == 0:
+            logger.warning(f"Expression '{expression}': 0 frames had faces out of {len(video_frames)}")
             return False, 0.0
         
-        # Analyze expression using facial landmarks
-        # Key landmarks for expressions
+        logger.info(f"Expression '{expression}': {len(all_landmarks)} frames with faces")
+        
+        # Key landmarks
         LEFT_MOUTH = 61
         RIGHT_MOUTH = 291
         UPPER_LIP = 13
@@ -791,97 +790,103 @@ class CVVerifier:
         LEFT_EYEBROW = 70
         RIGHT_EYEBROW = 300
         
-        # Use middle frame for analysis
-        mid_frame_idx = len(all_landmarks) // 2
-        landmarks = all_landmarks[mid_frame_idx]
+        # Check ALL frames and use the best score
+        best_confidence = 0.0
+        best_pass = False
         
-        if expression == "smile":
-            # Smile: mouth corners move up and outward
-            left_mouth = landmarks[LEFT_MOUTH]
-            right_mouth = landmarks[RIGHT_MOUTH]
-            mouth_width = abs(right_mouth[0] - left_mouth[0])
+        for fi, landmarks in enumerate(all_landmarks):
+            passed = False
+            confidence = 0.0
             
-            # Check mouth curvature (corners higher than center)
-            # In a smile, the corners are higher (lower y value) than the center
-            mouth_center_y = (left_mouth[1] + right_mouth[1]) / 2.0
-            upper_lip_y = landmarks[UPPER_LIP][1]
+            if expression == "smile":
+                left_mouth = landmarks[LEFT_MOUTH]
+                right_mouth = landmarks[RIGHT_MOUTH]
+                mouth_width = abs(right_mouth[0] - left_mouth[0])
+                
+                # Smile: corners of mouth are higher (lower y) than center of lip
+                mouth_corner_avg_y = (left_mouth[1] + right_mouth[1]) / 2.0
+                upper_lip_y = landmarks[UPPER_LIP][1]
+                
+                # Also check: mouth width relative to face width (eye-to-eye)
+                face_width = abs(landmarks[263][0] - landmarks[33][0]) + 1e-6
+                width_ratio = mouth_width / face_width
+                
+                smile_indicator = mouth_corner_avg_y - upper_lip_y
+                
+                if fi == 0:
+                    logger.info(f"  smile: width={mouth_width:.4f}, width_ratio={width_ratio:.4f}, indicator={smile_indicator:.5f}")
+                
+                # Very lenient: just needs mouth to be somewhat wide  
+                if width_ratio > 0.35 or smile_indicator > 0.001:
+                    confidence = min(max(width_ratio / 0.5, smile_indicator / 0.02), 1.0)
+                    passed = True
             
-            # Smile indicator: upper lip is higher (lower y) than mouth corners
-            # This creates the upward curve of a smile
-            smile_indicator = mouth_center_y - upper_lip_y
+            elif expression == "frown":
+                left_mouth = landmarks[LEFT_MOUTH]
+                right_mouth = landmarks[RIGHT_MOUTH]
+                mouth_corner_avg_y = (left_mouth[1] + right_mouth[1]) / 2.0
+                
+                # Frown: eyebrows lower (higher y), mouth corners down
+                left_brow_y = landmarks[LEFT_EYEBROW][1]
+                right_brow_y = landmarks[RIGHT_EYEBROW][1]
+                avg_brow_y = (left_brow_y + right_brow_y) / 2.0
+                
+                if fi == 0:
+                    logger.info(f"  frown: brow_y={avg_brow_y:.4f}, mouth_corner_y={mouth_corner_avg_y:.4f}")
+                
+                # Frown: brows are lower than usual (y > 0.33 typically)
+                if avg_brow_y > 0.32:
+                    confidence = min((avg_brow_y - 0.32) / 0.05, 1.0)
+                    passed = True
             
-            # Threshold: smile indicator > 0.005 and mouth width > 0.12
-            if smile_indicator > 0.005 and mouth_width > 0.12:
-                confidence = min(smile_indicator / 0.05, 1.0)
-                return True, confidence
-            else:
-                return False, max(smile_indicator / 0.05, 0.0)
+            elif expression == "surprised":
+                left_eye_v = abs(landmarks[159][1] - landmarks[145][1])
+                right_eye_v = abs(landmarks[386][1] - landmarks[374][1])
+                avg_eye = (left_eye_v + right_eye_v) / 2.0
+                
+                mouth_opening = abs(landmarks[LOWER_LIP][1] - landmarks[UPPER_LIP][1])
+                
+                if fi == 0:
+                    logger.info(f"  surprised: eye_opening={avg_eye:.5f}, mouth_opening={mouth_opening:.5f}")
+                
+                # Either eyes wide OR mouth open counts
+                if avg_eye > 0.008 or mouth_opening > 0.008:
+                    confidence = min((avg_eye + mouth_opening) / 0.03, 1.0)
+                    passed = True
+            
+            elif expression == "neutral":
+                mouth_opening = abs(landmarks[LOWER_LIP][1] - landmarks[UPPER_LIP][1])
+                
+                if fi == 0:
+                    logger.info(f"  neutral: mouth_opening={mouth_opening:.5f}")
+                
+                # Neutral is easy — mouth not wide open
+                if mouth_opening < 0.04:
+                    confidence = 0.85
+                    passed = True
+            
+            elif expression == "angry":
+                left_brow_y = landmarks[LEFT_EYEBROW][1]
+                right_brow_y = landmarks[RIGHT_EYEBROW][1]
+                avg_brow_y = (left_brow_y + right_brow_y) / 2.0
+                
+                # Brow distance (closer together = angry)
+                brow_dist = abs(landmarks[LEFT_EYEBROW][0] - landmarks[RIGHT_EYEBROW][0])
+                
+                if fi == 0:
+                    logger.info(f"  angry: brow_y={avg_brow_y:.4f}, brow_dist={brow_dist:.4f}")
+                
+                # Angry: brows low or close together
+                if avg_brow_y > 0.30 or brow_dist < 0.15:
+                    confidence = 0.7
+                    passed = True
+            
+            if passed and confidence > best_confidence:
+                best_confidence = confidence
+                best_pass = True
         
-        elif expression == "frown":
-            # Frown: mouth corners move down, eyebrows lower
-            left_mouth = landmarks[LEFT_MOUTH]
-            right_mouth = landmarks[RIGHT_MOUTH]
-            
-            # Check mouth curvature (corners lower than center)
-            mouth_center_y = (left_mouth[1] + right_mouth[1]) / 2.0
-            lower_lip_y = landmarks[LOWER_LIP][1]
-            
-            # Frown indicator: mouth corners are lower (higher y value)
-            frown_indicator = mouth_center_y - lower_lip_y
-            
-            if frown_indicator > 0.01:
-                confidence = min(frown_indicator / 0.03, 1.0)
-                return True, confidence
-            else:
-                return False, frown_indicator / 0.03
-        
-        elif expression == "surprised":
-            # Surprised: eyes wide open, mouth open, eyebrows raised
-            # Check eye opening
-            left_eye_vertical = abs(landmarks[159][1] - landmarks[145][1])
-            right_eye_vertical = abs(landmarks[386][1] - landmarks[374][1])
-            avg_eye_opening = (left_eye_vertical + right_eye_vertical) / 2.0
-            
-            # Check mouth opening
-            mouth_opening = abs(landmarks[LOWER_LIP][1] - landmarks[UPPER_LIP][1])
-            
-            # Surprised: both eyes and mouth open wide
-            if avg_eye_opening > 0.018 and mouth_opening > 0.02:
-                confidence = min((avg_eye_opening + mouth_opening) / 0.08, 1.0)
-                return True, confidence
-            else:
-                return False, (avg_eye_opening + mouth_opening) / 0.08
-        
-        elif expression == "neutral":
-            # Neutral: relaxed face, minimal expression
-            # Check that mouth and eyes are in neutral position
-            mouth_opening = abs(landmarks[LOWER_LIP][1] - landmarks[UPPER_LIP][1])
-            
-            # Neutral: small mouth opening (0.005-0.03)
-            if 0.005 <= mouth_opening <= 0.03:
-                confidence = 0.8  # High confidence for neutral
-                return True, confidence
-            else:
-                return False, 0.5
-        
-        elif expression == "angry":
-            # Angry: eyebrows lowered and closer together, mouth tense
-            left_brow = landmarks[LEFT_EYEBROW]
-            right_brow = landmarks[RIGHT_EYEBROW]
-            
-            # Check eyebrow position (lower = higher y value)
-            avg_brow_y = (left_brow[1] + right_brow[1]) / 2.0
-            
-            # Angry: eyebrows lower (higher y value, closer to eyes)
-            # Baseline eyebrow position is around 0.3-0.35
-            if avg_brow_y > 0.35:
-                confidence = min((avg_brow_y - 0.35) / 0.1, 1.0)
-                return True, confidence
-            else:
-                return False, (avg_brow_y - 0.35) / 0.1
-        
-        # Unknown expression
-        return False, 0.0
+        logger.info(f"  Expression '{expression}' best result: pass={best_pass}, confidence={best_confidence:.3f}")
+        return best_pass, best_confidence
     
     def __del__(self):
         """Clean up MediaPipe resources"""

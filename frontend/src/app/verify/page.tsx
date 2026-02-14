@@ -345,7 +345,7 @@ function VerificationContent() {
               <h2 className="font-mono text-[10px] tracking-[0.2em] uppercase text-ink-400 mb-4">Camera Feed</h2>
               <CameraCapture 
                 onFrame={handleFrame}
-                fps={10}
+                fps={30}
                 isActive={sessionState.status === 'active'}
               />
             </div>

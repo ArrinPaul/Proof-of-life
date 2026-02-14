@@ -10,7 +10,7 @@ interface CameraCaptureProps {
 
 export default function CameraCapture({ 
   onFrame, 
-  fps = 10,
+  fps = 30,
   isActive = true 
 }: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null)

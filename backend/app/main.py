@@ -464,7 +464,7 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
         # Generate challenge sequence (Requirement 2.1)
         challenge_sequence = challenge_engine.generate_challenge_sequence(
             session_id=session_id,
-            num_challenges=3
+            num_challenges=8
         )
         
         # Validate nonce hasn't been used before (Requirement 11.3)
@@ -612,8 +612,8 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                                 challenge_frames.append(frame)
                                 all_video_frames.append(frame)
                                 
-                                # Collect frames for ~2 seconds (at 10 FPS = 20 frames)
-                                if len(challenge_frames) >= 20:
+                                # Collect frames for ~2 seconds (at 30 FPS = 60 frames)
+                                if len(challenge_frames) >= 60:
                                     break
                     
                     elif message.get("type") == "challenge_complete":
@@ -632,8 +632,10 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                     break
             
             # Verify challenge (Requirement 4.2, 4.3)
+            logger.info(f"Challenge '{challenge.instruction}' (type={challenge.type.value}): collected {len(challenge_frames)} frames")
             if len(challenge_frames) > 0:
                 challenge_result = cv_verifier.verify_challenge(challenge, challenge_frames)
+                logger.info(f"Challenge '{challenge.instruction}' result: completed={challenge_result.completed}, confidence={challenge_result.confidence:.3f}")
                 
                 # Update session with result
                 session_manager.update_session(session_id, challenge_result)
@@ -716,15 +718,16 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                 )
         
         # Check if minimum challenges completed (Requirement 4.5)
-        if completed_count < 3:
+        min_required = 3
+        if completed_count < min_required:
             session_manager.terminate_session(session_id, "failed")
             await _send_feedback(
                 websocket,
                 FeedbackType.VERIFICATION_FAILED,
-                f"Verification failed. Only {completed_count} of 3 challenges completed.",
+                f"Verification failed. Only {completed_count} of {min_required} challenges completed.",
                 {
                     "completed_count": completed_count,
-                    "required_count": 3,
+                    "required_count": min_required,
                     "final_score": 0.0,
                     "passed": False
                 }

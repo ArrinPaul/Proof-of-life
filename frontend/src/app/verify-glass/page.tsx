@@ -96,7 +96,7 @@ export default function VerifyGlassPage() {
       cameraRef.current = camera
       await camera.start()
 
-      // Start sending frames at 10 FPS
+      // Start sending frames at 30 FPS
       startFrameCapture()
 
     } catch (error) {
@@ -118,7 +118,7 @@ export default function VerifyGlassPage() {
   }
 
   const startFrameCapture = () => {
-    // Capture and send frames at 10 FPS (every 100ms)
+    // Capture and send frames at 30 FPS (every ~33ms)
     frameCaptureIntervalRef.current = setInterval(() => {
       if (cameraRef.current && wsClientRef.current?.isConnected()) {
         try {
@@ -128,7 +128,7 @@ export default function VerifyGlassPage() {
           console.error('Failed to capture/send frame:', error)
         }
       }
-    }, 100)
+    }, 33)
   }
 
   const handleWebSocketMessage = (message: FeedbackMessage) => {
