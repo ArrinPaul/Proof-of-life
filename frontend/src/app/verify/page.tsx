@@ -125,11 +125,10 @@ function VerificationContent() {
 
       const data = await response.json()
       const sessionId = data.session_id
-      const wsUrl = data.websocket_url || `ws://localhost:8000/ws/verify/${sessionId}`
 
       startSession(sessionId, [])
 
-      const client = new WebSocketClient(wsUrl)
+      const client = new WebSocketClient(sessionId)
       client.onMessage(handleWebSocketMessage)
       client.onError((error) => {
         console.error('WebSocket error:', error)

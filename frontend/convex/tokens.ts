@@ -7,9 +7,16 @@ export const store = mutation({
     token: v.string(),
     issued_at: v.number(),
     expires_at: v.number(),
+    token_id: v.optional(v.string()),
+    user_id: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await ctx.db.insert("tokens", args);
+    await ctx.db.insert("tokens", {
+      session_id: args.session_id,
+      token: args.token,
+      issued_at: args.issued_at,
+      expires_at: args.expires_at,
+    });
   },
 });
 

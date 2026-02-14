@@ -3,12 +3,14 @@ import { v } from "convex/values";
 
 export default defineSchema({
   sessions: defineTable({
+    session_id: v.string(), // backend-generated UUID
     user_id: v.string(),
     status: v.string(), // "active", "completed", "timeout", "failed"
     start_time: v.number(),
     end_time: v.optional(v.number()),
     failed_count: v.number(),
   })
+    .index("by_session_id", ["session_id"])
     .index("by_user", ["user_id"])
     .index("by_status", ["status"]),
 

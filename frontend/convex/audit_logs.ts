@@ -7,11 +7,16 @@ export const log = mutation({
     user_id: v.optional(v.string()),
     event_type: v.string(),
     details: v.optional(v.string()),
+    log_id: v.optional(v.string()),
+    timestamp: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     await ctx.db.insert("audit_logs", {
-      ...args,
-      timestamp: Date.now(),
+      session_id: args.session_id,
+      user_id: args.user_id,
+      event_type: args.event_type,
+      details: args.details,
+      timestamp: args.timestamp ?? Date.now(),
     });
   },
 });

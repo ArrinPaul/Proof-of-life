@@ -15,6 +15,8 @@ import cv2
 import uuid
 import time
 import asyncio
+import jwt as pyjwt
+import httpx
 from dotenv import load_dotenv
 
 # Import all services
@@ -91,6 +93,52 @@ emotion_analyzer = EmotionAnalyzer()
 # Initialize Deepfake Detector
 deepfake_model_path = os.getenv("DEEPFAKE_MODEL_PATH", None)
 deepfake_detector = DeepfakeDetector(model_path=deepfake_model_path)
+
+# Clerk JWT verification cache
+_clerk_jwks_client = None
+
+def _get_clerk_jwks_client():
+    """Get or create the Clerk JWKS client for JWT verification"""
+    global _clerk_jwks_client
+    if _clerk_jwks_client is None:
+        clerk_issuer = os.getenv("CLERK_ISSUER_URL")
+        if clerk_issuer:
+            jwks_url = f"{clerk_issuer}/.well-known/jwks.json"
+            _clerk_jwks_client = pyjwt.PyJWKClient(jwks_url)
+    return _clerk_jwks_client
+
+def validate_clerk_token(auth_header: str) -> Optional[dict]:
+    """
+    Validate a Clerk JWT token from the Authorization header.
+    
+    Returns decoded payload if valid, None if validation fails or is disabled.
+    """
+    clerk_issuer = os.getenv("CLERK_ISSUER_URL")
+    if not clerk_issuer:
+        # Clerk validation not configured — allow passthrough in dev
+        logger.warning("CLERK_ISSUER_URL not set — skipping Clerk token validation")
+        return None
+
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+
+    token = auth_header.replace("Bearer ", "")
+    try:
+        jwks_client = _get_clerk_jwks_client()
+        if not jwks_client:
+            return None
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        decoded = pyjwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            issuer=clerk_issuer,
+            options={"verify_aud": False},
+        )
+        return decoded
+    except Exception as e:
+        logger.warning(f"Clerk token validation failed: {e}")
+        return None
 
 # Background task control
 _purge_task = None
@@ -267,9 +315,42 @@ async def verify_authentication(
         HTTPException: If authentication fails or session creation fails
     """
     try:
-        # In a production system, we would validate the Clerk token here
-        # For now, we'll accept the user_id from the request body
-        # TODO: Add Clerk token validation
+        # Validate Clerk token if configured
+        clerk_issuer = os.getenv("CLERK_ISSUER_URL")
+        if clerk_issuer:
+            if not authorization:
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": {
+                            "code": "MISSING_AUTH_TOKEN",
+                            "message": "Authorization header with Clerk token is required",
+                            "category": "authentication",
+                            "recoverable": False
+                        }
+                    }
+                )
+            clerk_payload = validate_clerk_token(authorization)
+            if clerk_payload is None:
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": {
+                            "code": "INVALID_AUTH_TOKEN",
+                            "message": "Invalid or expired Clerk token",
+                            "category": "authentication",
+                            "recoverable": False
+                        }
+                    }
+                )
+            # Use the Clerk user ID (sub claim) as the authoritative user_id
+            clerk_user_id = clerk_payload.get("sub")
+            if clerk_user_id and clerk_user_id != request.user_id:
+                logger.warning(
+                    f"User ID mismatch: body={request.user_id}, clerk={clerk_user_id}"
+                )
+                # Use the Clerk-verified ID
+                request.user_id = clerk_user_id
         
         if not request.user_id:
             return JSONResponse(

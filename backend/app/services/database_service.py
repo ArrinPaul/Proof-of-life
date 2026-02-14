@@ -1,238 +1,247 @@
 """
 Convex Database Service for Proof of Life Authentication System
 
-This replaces the SQLite database service with Convex backend.
+Synchronous Convex HTTP API client that matches the same interface as the
+original SQLite DatabaseService, so SessionManager and main.py can call
+it without changes.
 """
 import os
 import httpx
 import json
+import time
+import logging
 from typing import List, Optional
-from app.models.data_models import Session, SessionStatus, ScoringResult, AuditLog
+
+from app.models.data_models import Session, SessionStatus, ScoringResult
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseService:
-    """Service for managing Convex database operations"""
-    
+    """Service for managing Convex database operations (synchronous)"""
+
     def __init__(self):
-        """Initialize Convex database service"""
-        self.deployment_url = os.getenv("CONVEX_URL", "https://keen-lion-797.convex.cloud")
-        self.client = httpx.AsyncClient(timeout=30.0)
-    
-    async def _mutation(self, function_name: str, args: dict) -> any:
-        """Execute a Convex mutation"""
+        """Initialize Convex database service with sync HTTP client"""
+        self.deployment_url = os.getenv(
+            "CONVEX_URL", "https://keen-lion-797.convex.cloud"
+        )
+        self.client = httpx.Client(timeout=30.0)
+
+    # -- Convex HTTP helpers --
+
+    def _mutation(self, function_name, args):
+        """Execute a Convex mutation (sync)"""
         url = f"{self.deployment_url}/api/mutation"
-        payload = {
-            "path": function_name,
-            "args": [args] if args else []
-        }
-        response = await self.client.post(url, json=payload)
-        response.raise_for_status()
-        result = response.json()
-        return result.get("value")
-    
-    async def _query(self, function_name: str, args: dict) -> any:
-        """Execute a Convex query"""
-        url = f"{self.deployment_url}/api/query"
-        payload = {
-            "path": function_name,
-            "args": [args] if args else []
-        }
-        response = await self.client.post(url, json=payload)
-        response.raise_for_status()
-        result = response.json()
-        return result.get("value")
-    
-    # Session operations
-    async def create_session(self, user_id: str) -> str:
-        """Create a new session"""
-        session_id = await self._mutation("sessions:create", {"user_id": user_id})
-        return session_id
-    
-    async def get_session(self, session_id: str) -> Optional[Session]:
-        """Get session by ID"""
+        payload = {"path": function_name, "args": args}
         try:
-            data = await self._query("sessions:get", {"id": session_id})
+            response = self.client.post(url, json=payload)
+            response.raise_for_status()
+            result = response.json()
+            return result.get("value")
+        except Exception as e:
+            logger.error(f"Convex mutation {function_name} failed: {e}")
+            raise
+
+    def _query(self, function_name, args):
+        """Execute a Convex query (sync)"""
+        url = f"{self.deployment_url}/api/query"
+        payload = {"path": function_name, "args": args}
+        try:
+            response = self.client.post(url, json=payload)
+            response.raise_for_status()
+            result = response.json()
+            return result.get("value")
+        except Exception as e:
+            logger.error(f"Convex query {function_name} failed: {e}")
+            raise
+
+    # -- Session operations --
+
+    def create_session(self, session_id, user_id, start_time):
+        """Create a new session record."""
+        self._mutation(
+            "sessions:create",
+            {
+                "session_id": session_id,
+                "user_id": user_id,
+                "start_time": start_time * 1000,
+            },
+        )
+
+    def get_session(self, session_id):
+        """Retrieve session by ID. Returns dict or None."""
+        try:
+            data = self._query("sessions:getBySessionId", {"session_id": session_id})
             if not data:
                 return None
-            return Session(
-                session_id=data["_id"],
-                user_id=data["user_id"],
-                status=SessionStatus(data["status"]),
-                start_time=data["start_time"],
-                end_time=data.get("end_time"),
-                failed_count=data["failed_count"]
-            )
-        except:
+            return {
+                "session_id": data.get("session_id", data.get("_id")),
+                "user_id": data["user_id"],
+                "start_time": data["start_time"] / 1000,
+                "end_time": (data["end_time"] / 1000) if data.get("end_time") else None,
+                "status": data["status"],
+                "failed_count": data["failed_count"],
+            }
+        except Exception:
             return None
-    
-    async def update_session(
-        self,
-        session_id: str,
-        status: Optional[SessionStatus] = None,
-        failed_count: Optional[int] = None,
-        end_time: Optional[float] = None
-    ):
-        """Update session"""
-        args = {"id": session_id}
-        if status:
-            args["status"] = status.value
+
+    def update_session(self, session_id, status=None, failed_count=None, end_time=None):
+        """Update session fields"""
+        args = {"session_id": session_id}
+        if status is not None:
+            args["status"] = status.value if hasattr(status, "value") else status
         if failed_count is not None:
             args["failed_count"] = failed_count
         if end_time is not None:
-            args["end_time"] = end_time
-        
-        await self._mutation("sessions:update", args)
-    
-    async def check_timeout(self, session_id: str) -> bool:
-        """Check if session has timed out"""
-        result = await self._query("sessions:checkTimeout", {"id": session_id})
-        return result
-    
-    async def terminate_session(self, session_id: str, reason: str):
-        """Terminate a session"""
-        await self._mutation("sessions:terminate", {
-            "id": session_id,
-            "reason": reason
-        })
-    
-    # Nonce operations
-    async def store_nonce(self, session_id: str, nonce: str, expiry_seconds: int = 300):
-        """Store a nonce"""
-        import time
-        expires_at = (time.time() + expiry_seconds) * 1000  # Convert to ms
-        await self._mutation("nonces:store", {
-            "session_id": session_id,
-            "nonce": nonce,
-            "expires_at": expires_at
-        })
-    
-    async def check_nonce(self, session_id: str, nonce: str) -> bool:
-        """Check if nonce is valid"""
-        result = await self._query("nonces:validate", {
-            "session_id": session_id,
-            "nonce": nonce
-        })
-        if result:
-            # Mark as used
-            await self._mutation("nonces:markUsed", {"nonce": nonce})
-        return result
-    
-    async def purge_expired_nonces(self) -> int:
-        """Purge expired nonces"""
-        result = await self._mutation("nonces:purgeExpired", {})
-        return result
-    
-    # Token operations
-    async def save_token(
-        self,
-        session_id: str,
-        token: str,
-        issued_at: float,
-        expires_at: float
-    ):
-        """Store a token"""
-        await self._mutation("tokens:store", {
-            "session_id": session_id,
-            "token": token,
-            "issued_at": issued_at * 1000,  # Convert to ms
-            "expires_at": expires_at * 1000
-        })
-    
-    async def get_token(self, token: str) -> Optional[dict]:
-        """Get token by value"""
+            args["end_time"] = end_time * 1000
+        self._mutation("sessions:updateBySessionId", args)
+
+    # -- Verification results --
+
+    def save_verification_result(self, result_id, session_id, scoring_result):
+        """Store verification result"""
+        self._mutation(
+            "verification_results:save",
+            {
+                "result_id": result_id,
+                "session_id": session_id,
+                "liveness_score": scoring_result.liveness_score,
+                "deepfake_score": scoring_result.deepfake_score,
+                "emotion_score": scoring_result.emotion_score,
+                "final_score": scoring_result.final_score,
+                "passed": scoring_result.passed,
+                "timestamp": scoring_result.timestamp * 1000,
+            },
+        )
+
+    def get_verification_result(self, session_id):
+        """Retrieve verification result for a session"""
         try:
-            result = await self._query("tokens:get", {"token": token})
-            return result
-        except:
-            return None
-    
-    # Verification results
-    async def save_verification_result(self, result: ScoringResult):
-        """Save verification result"""
-        await self._mutation("verification_results:save", {
-            "session_id": result.session_id,
-            "liveness_score": result.liveness_score,
-            "emotion_score": result.emotion_score,
-            "deepfake_score": result.deepfake_score,
-            "final_score": result.final_score,
-            "passed": result.passed
-        })
-    
-    async def get_verification_result(self, session_id: str) -> Optional[ScoringResult]:
-        """Get verification result by session ID"""
-        try:
-            data = await self._query("verification_results:getBySession", {
-                "session_id": session_id
-            })
+            data = self._query(
+                "verification_results:getBySession", {"session_id": session_id}
+            )
             if not data:
                 return None
-            return ScoringResult(
-                session_id=data["session_id"],
-                liveness_score=data["liveness_score"],
-                emotion_score=data["emotion_score"],
-                deepfake_score=data["deepfake_score"],
-                final_score=data["final_score"],
-                passed=data["passed"],
-                timestamp=data["timestamp"] / 1000  # Convert from ms
-            )
-        except:
+            return {
+                "session_id": data["session_id"],
+                "liveness_score": data["liveness_score"],
+                "deepfake_score": data["deepfake_score"],
+                "emotion_score": data["emotion_score"],
+                "final_score": data["final_score"],
+                "passed": data["passed"],
+                "timestamp": data["timestamp"] / 1000,
+            }
+        except Exception:
             return None
-    
-    # Audit logs
-    async def save_audit_log(self, log: AuditLog):
-        """Log an audit event"""
-        args = {
-            "event_type": log.event_type,
-        }
-        if log.session_id:
-            args["session_id"] = log.session_id
-        if log.user_id:
-            args["user_id"] = log.user_id
-        if log.details:
-            args["details"] = json.dumps(log.details)
-        
-        await self._mutation("audit_logs:log", args)
-    
-    async def get_audit_logs(
-        self,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        start_time: Optional[float] = None,
-        end_time: Optional[float] = None
-    ) -> List[AuditLog]:
-        """Get audit logs with filters"""
-        if session_id:
-            logs = await self._query("audit_logs:getBySession", {"session_id": session_id})
-        elif user_id:
-            logs = await self._query("audit_logs:getByUser", {"user_id": user_id})
-        else:
-            logs = await self._query("audit_logs:getRecent", {"limit": 100})
-        
-        result = []
-        for log in logs or []:
-            result.append(AuditLog(
-                session_id=log.get("session_id"),
-                user_id=log.get("user_id"),
-                event_type=log["event_type"],
-                timestamp=log["timestamp"] / 1000,  # Convert from ms
-                details=json.loads(log["details"]) if log.get("details") else None
-            ))
-        
-        # Filter by time if specified
-        if start_time or end_time:
-            result = [
-                log for log in result
-                if (not start_time or log.timestamp >= start_time) and
-                   (not end_time or log.timestamp <= end_time)
-            ]
-        
-        return result
-    
-    async def purge_old_audit_logs(self, days: int = 90) -> int:
-        """Purge old audit logs"""
-        result = await self._mutation("audit_logs:purgeOld", {"days": days})
-        return result
-    
-    async def close(self):
-        """Close the client"""
-        await self.client.aclose()
+
+    # -- Token operations --
+
+    def save_token_issuance(self, token_id, user_id, session_id, issued_at, expires_at):
+        """Log token generation"""
+        self._mutation(
+            "tokens:store",
+            {
+                "token_id": token_id,
+                "user_id": user_id,
+                "session_id": session_id,
+                "token": token_id,
+                "issued_at": issued_at * 1000,
+                "expires_at": expires_at * 1000,
+            },
+        )
+
+    def get_token(self, token_id):
+        """Retrieve token information"""
+        try:
+            data = self._query("tokens:get", {"token": token_id})
+            if not data:
+                return None
+            return {
+                "token_id": data.get("token_id", data.get("token")),
+                "user_id": data.get("user_id"),
+                "session_id": data["session_id"],
+                "issued_at": data["issued_at"] / 1000,
+                "expires_at": data["expires_at"] / 1000,
+            }
+        except Exception:
+            return None
+
+    # -- Nonce operations (anti-replay) --
+
+    def check_nonce_used(self, nonce):
+        """Return True if nonce has already been used / exists"""
+        try:
+            result = self._query("nonces:exists", {"nonce": nonce})
+            return bool(result)
+        except Exception:
+            return False
+
+    def store_nonce(self, nonce, session_id, expires_at):
+        """Record nonce to prevent replay"""
+        self._mutation(
+            "nonces:store",
+            {
+                "session_id": session_id,
+                "nonce": nonce,
+                "expires_at": expires_at * 1000,
+            },
+        )
+
+    def purge_expired_nonces(self):
+        """Remove expired nonces. Returns count deleted."""
+        try:
+            result = self._mutation("nonces:purgeExpired", {})
+            return result or 0
+        except Exception:
+            return 0
+
+    # -- Audit log operations --
+
+    def save_audit_log(self, log_id, session_id, user_id, event_type, timestamp, details):
+        """Store audit log entry"""
+        self._mutation(
+            "audit_logs:log",
+            {
+                "log_id": log_id,
+                "session_id": session_id,
+                "user_id": user_id,
+                "event_type": event_type,
+                "timestamp": timestamp * 1000,
+                "details": json.dumps(details),
+            },
+        )
+
+    def get_audit_logs(self, user_id=None, start_time=None, end_time=None, limit=100):
+        """Retrieve audit records"""
+        try:
+            if user_id:
+                logs = self._query("audit_logs:getByUser", {"user_id": user_id})
+            else:
+                logs = self._query("audit_logs:getRecent", {"limit": limit})
+
+            results = []
+            for log in logs or []:
+                entry = {
+                    "log_id": log.get("log_id", log.get("_id")),
+                    "session_id": log.get("session_id"),
+                    "user_id": log.get("user_id"),
+                    "event_type": log["event_type"],
+                    "timestamp": log["timestamp"] / 1000,
+                    "details": json.loads(log["details"]) if log.get("details") else None,
+                }
+                results.append(entry)
+
+            if start_time or end_time:
+                results = [
+                    r
+                    for r in results
+                    if (not start_time or r["timestamp"] >= start_time)
+                    and (not end_time or r["timestamp"] <= end_time)
+                ]
+            return results
+        except Exception:
+            return []
+
+    def close(self):
+        """Close the HTTP client"""
+        self.client.close()

@@ -55,18 +55,24 @@ export class APIClient {
    * Create a new verification session
    * 
    * @param userId - User identifier
+   * @param authToken - Optional Clerk auth token for backend validation
    * @returns Session response with session_id and websocket_url
    * @throws Error if session creation fails
    * 
    * Validates Requirements: 1.1, 1.2, 12.2
    */
-  async createSession(userId: string): Promise<SessionResponse> {
+  async createSession(userId: string, authToken?: string): Promise<SessionResponse> {
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+
       const response = await fetch(`${this.baseURL}/api/auth/verify`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({ user_id: userId }),
       });
 

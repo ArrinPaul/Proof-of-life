@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
+import { useAuth, useUser } from '@clerk/nextjs'
+import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import FaceIDScanner from '@/components/FaceIDScanner'
 import GlassCard from '@/components/GlassCard'
@@ -9,6 +11,9 @@ import { WebSocketClient, FeedbackMessage } from '@/lib/websocket'
 import { CameraCapture } from '@/lib/camera'
 
 export default function VerifyGlassPage() {
+  const { isLoaded, userId, getToken } = useAuth()
+  const { user } = useUser()
+  const router = useRouter()
   const [step, setStep] = useState<'idle' | 'scanning' | 'success' | 'error'>('idle')
   const [progress, setProgress] = useState(0)
   const [currentChallenge, setCurrentChallenge] = useState<string>('')
@@ -24,6 +29,13 @@ export default function VerifyGlassPage() {
   const wsClientRef = useRef<WebSocketClient | null>(null)
   const cameraRef = useRef<CameraCapture | null>(null)
   const frameCaptureIntervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Redirect to sign-in if not authenticated
+  useEffect(() => {
+    if (isLoaded && !userId) {
+      router.push('/sign-in')
+    }
+  }, [isLoaded, userId, router])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -60,9 +72,12 @@ export default function VerifyGlassPage() {
       setErrorMessage('')
       setScores({ liveness: 0, emotion: 0, deepfake: 0 })
 
-      // Task 6.1: Create session using API client
-      const userId = 'user_' + Date.now() // Generate a user ID
-      const sessionResponse = await apiClient.createSession(userId)
+      // Task 6.1: Create session using Clerk-authenticated user
+      if (!userId) {
+        throw new Error('Not authenticated')
+      }
+      const clerkToken = await getToken()
+      const sessionResponse = await apiClient.createSession(userId, clerkToken ?? undefined)
       setSessionId(sessionResponse.session_id)
 
       // Task 6.2: Establish WebSocket connection

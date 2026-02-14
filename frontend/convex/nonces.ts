@@ -17,6 +17,17 @@ export const store = mutation({
   },
 });
 
+export const exists = query({
+  args: { nonce: v.string() },
+  handler: async (ctx, args) => {
+    const nonceRecord = await ctx.db
+      .query("nonces")
+      .withIndex("by_nonce", (q) => q.eq("nonce", args.nonce))
+      .first();
+    return !!nonceRecord;
+  },
+});
+
 export const validate = query({
   args: {
     session_id: v.string(),

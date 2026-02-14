@@ -1,0 +1,32 @@
+# Render deployment config (alternative to Railway)
+# For Railway, use railway.json instead
+services:
+  - type: web
+    name: proof-of-life-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: CONVEX_URL
+        sync: false  # Set in Render dashboard
+      - key: CLERK_ISSUER_URL
+        sync: false  # Set in Render dashboard
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: RS256
+      - key: JWT_EXPIRY_MINUTES
+        value: "15"
+      - key: SESSION_TIMEOUT_SECONDS
+        value: "120"
+      - key: MAX_FAILED_ATTEMPTS
+        value: "3"
+      - key: CORS_ORIGINS
+        sync: false  # Set to your Vercel URL in dashboard
+      - key: USE_WSS
+        value: "true"
+      - key: WEBSOCKET_HOST
+        sync: false  # Set to your Render service URL
+      - key: PYTHON_VERSION
+        value: "3.9.0"

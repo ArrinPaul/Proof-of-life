@@ -9,11 +9,18 @@ export const save = mutation({
     deepfake_score: v.number(),
     final_score: v.number(),
     passed: v.boolean(),
+    result_id: v.optional(v.string()),
+    timestamp: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     await ctx.db.insert("verification_results", {
-      ...args,
-      timestamp: Date.now(),
+      session_id: args.session_id,
+      liveness_score: args.liveness_score,
+      emotion_score: args.emotion_score,
+      deepfake_score: args.deepfake_score,
+      final_score: args.final_score,
+      passed: args.passed,
+      timestamp: args.timestamp ?? Date.now(),
     });
   },
 });
