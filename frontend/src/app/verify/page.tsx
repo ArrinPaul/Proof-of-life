@@ -203,31 +203,38 @@ function VerificationContent() {
 
   if (sessionState.status === 'completed' && token) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-green-50 to-white p-8">
-        <div className="max-w-2xl mx-auto">
-          <div className="bg-white rounded-lg shadow-xl p-8 text-center">
-            <div className="text-6xl mb-4">✅</div>
-            <h1 className="text-3xl font-bold text-green-600 mb-4">
-              Verification Successful!
+      <div className="min-h-screen bg-grid relative overflow-hidden p-8">
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-neon-green/[0.04] rounded-full blur-[120px]" />
+        </div>
+        <div className="max-w-2xl mx-auto relative z-10">
+          <div className="bg-void-100/80 backdrop-blur-xl border border-neon-green/20 p-8 text-center shadow-glow-green" style={{ borderRadius: '2px' }}>
+            <div className="w-14 h-14 mx-auto flex items-center justify-center bg-neon-green/[0.08] border border-neon-green/20 mb-6" style={{ borderRadius: '2px' }}>
+              <svg className="w-7 h-7 text-neon-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h1 className="font-display text-3xl font-bold text-ink-100 mb-3">
+              Identity Verified
             </h1>
-            <p className="text-gray-600 mb-6">
-              You have been authenticated successfully.
+            <p className="text-ink-400 font-mono text-sm mb-8">
+              Authentication token issued successfully.
             </p>
-            <div className="bg-gray-50 rounded-lg p-4 mb-6">
-              <p className="text-sm text-gray-600 mb-2">Final Score</p>
-              <p className="text-4xl font-bold text-gray-900">
+            <div className="bg-void-200/60 border border-white/[0.06] p-5 mb-6" style={{ borderRadius: '2px' }}>
+              <p className="text-[10px] font-mono tracking-[0.2em] uppercase text-ink-500 mb-2">Final Score</p>
+              <p className="font-mono text-4xl font-bold text-neon-green">
                 {(token.finalScore * 100).toFixed(0)}%
               </p>
             </div>
-            <div className="bg-blue-50 rounded-lg p-4 mb-6 text-left">
-              <p className="text-sm font-medium text-gray-700 mb-2">Your Token:</p>
-              <code className="text-xs text-gray-600 break-all block">
+            <div className="bg-void-200/40 border border-white/[0.06] p-4 mb-6 text-left" style={{ borderRadius: '2px' }}>
+              <p className="text-[10px] font-mono tracking-[0.2em] uppercase text-ink-500 mb-2">Token</p>
+              <code className="text-[11px] font-mono text-ink-400 break-all block">
                 {token.token.substring(0, 50)}...
               </code>
             </div>
             <button
               onClick={() => router.push('/profile')}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+              className="px-6 py-3 font-mono text-sm tracking-[0.15em] uppercase bg-neon-cyan text-void-50 font-bold clip-corner shadow-glow-cyan"
             >
               Go to Profile
             </button>
@@ -239,21 +246,29 @@ function VerificationContent() {
 
   if (sessionState.status === 'failed') {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-red-50 to-white p-8">
-        <div className="max-w-2xl mx-auto">
-          <div className="bg-white rounded-lg shadow-xl p-8 text-center">
-            <div className="text-6xl mb-4">❌</div>
-            <h1 className="text-3xl font-bold text-red-600 mb-4">
+      <div className="min-h-screen bg-grid relative overflow-hidden p-8">
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-neon-red/[0.04] rounded-full blur-[120px]" />
+        </div>
+        <div className="max-w-2xl mx-auto relative z-10">
+          <div className="bg-void-100/80 backdrop-blur-xl border border-neon-red/20 p-8 text-center shadow-glow-red" style={{ borderRadius: '2px' }}>
+            <div className="w-14 h-14 mx-auto flex items-center justify-center bg-neon-red/[0.08] border border-neon-red/20 mb-6" style={{ borderRadius: '2px' }}>
+              <svg className="w-7 h-7 text-neon-red" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </div>
+            <h1 className="font-display text-3xl font-bold text-ink-100 mb-3">
               Verification Failed
             </h1>
-            <p className="text-gray-600 mb-6">
-              {error || 'Unable to verify your identity. Please try again.'}
+            <p className="text-ink-400 font-mono text-sm mb-8">
+              {error || 'Unable to verify identity. Retry recommended.'}
             </p>
             <button
               onClick={handleRestart}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+              className="px-6 py-3 font-mono text-sm tracking-[0.15em] uppercase bg-void-200/80 text-ink-200 border border-white/[0.08]"
+              style={{ borderRadius: '2px' }}
             >
-              Try Again
+              Retry Protocol
             </button>
           </div>
         </div>
@@ -263,46 +278,53 @@ function VerificationContent() {
 
   if (sessionState.status === 'idle') {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white p-8">
-        <div className="max-w-2xl mx-auto">
-          <div className="bg-white rounded-lg shadow-xl p-8">
-            <h1 className="text-3xl font-bold text-gray-900 mb-4">
-              Proof of Life Verification
+      <div className="min-h-screen bg-grid relative overflow-hidden p-8">
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-neon-cyan/[0.03] rounded-full blur-[120px]" />
+        </div>
+        <div className="max-w-2xl mx-auto relative z-10">
+          <div className="bg-void-100/80 backdrop-blur-xl border border-white/[0.06] p-8" style={{ borderRadius: '2px' }}>
+            <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-neon-cyan/30 to-transparent" />
+            <h1 className="font-display text-3xl font-bold text-ink-100 mb-2">
+              SENTINEL
             </h1>
-            <p className="text-gray-600 mb-6">
-              Welcome, {user.firstName || user.emailAddresses[0].emailAddress}!
+            <p className="font-mono text-xs tracking-[0.2em] uppercase text-neon-cyan/60 mb-6">
+              Proof-of-Life Protocol
             </p>
-            <div className="bg-blue-50 rounded-lg p-6 mb-6">
-              <h2 className="font-semibold text-gray-900 mb-3">What to expect:</h2>
-              <ul className="space-y-2 text-gray-700">
-                <li className="flex items-start gap-2">
-                  <span>📹</span>
-                  <span>You'll be asked to grant camera access</span>
+            <p className="text-ink-300 font-mono text-sm mb-8">
+              Welcome, {user.firstName || user.emailAddresses[0].emailAddress}
+            </p>
+            <div className="bg-void-200/60 border border-white/[0.06] p-5 mb-8" style={{ borderRadius: '2px' }}>
+              <h2 className="font-mono text-[10px] tracking-[0.2em] uppercase text-ink-400 mb-4">Protocol Steps</h2>
+              <ul className="space-y-3 text-sm font-mono text-ink-400">
+                <li className="flex items-start gap-3">
+                  <span className="text-neon-cyan text-xs mt-0.5">01</span>
+                  <span>Grant camera access for biometric capture</span>
                 </li>
-                <li className="flex items-start gap-2">
-                  <span>🎯</span>
-                  <span>Complete 3+ challenges (gestures and expressions)</span>
+                <li className="flex items-start gap-3">
+                  <span className="text-neon-cyan text-xs mt-0.5">02</span>
+                  <span>Complete 3 gesture &amp; expression challenges</span>
                 </li>
-                <li className="flex items-start gap-2">
-                  <span>🤖</span>
-                  <span>AI will verify you're a real person (not a deepfake)</span>
+                <li className="flex items-start gap-3">
+                  <span className="text-neon-cyan text-xs mt-0.5">03</span>
+                  <span>ML pipeline verifies liveness &amp; deepfake detection</span>
                 </li>
-                <li className="flex items-start gap-2">
-                  <span>⏱️</span>
-                  <span>Each challenge has a 10-second timeout</span>
+                <li className="flex items-start gap-3">
+                  <span className="text-neon-cyan text-xs mt-0.5">04</span>
+                  <span>10-second timeout per challenge</span>
                 </li>
-                <li className="flex items-start gap-2">
-                  <span>🎉</span>
-                  <span>Score 70% or higher to pass</span>
+                <li className="flex items-start gap-3">
+                  <span className="text-neon-cyan text-xs mt-0.5">05</span>
+                  <span>Score 70%+ threshold to receive JWT token</span>
                 </li>
               </ul>
             </div>
             <button
               onClick={startVerification}
               disabled={isStarting}
-              className="w-full px-6 py-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed text-lg font-semibold"
+              className="w-full py-4 font-mono text-sm tracking-[0.15em] uppercase text-void-50 bg-neon-cyan font-bold clip-corner shadow-glow-cyan disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {isStarting ? 'Starting...' : 'Start Verification'}
+              {isStarting ? 'Initializing...' : 'Initialize Scan'}
             </button>
           </div>
         </div>
@@ -311,12 +333,16 @@ function VerificationContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white p-8">
-      <div className="max-w-6xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <div className="space-y-6">
-            <div className="bg-white rounded-lg shadow-lg p-6">
-              <h2 className="text-xl font-bold text-gray-900 mb-4">Camera Feed</h2>
+    <div className="min-h-screen bg-grid relative overflow-hidden p-6">
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-1/4 left-1/4 w-[400px] h-[400px] bg-neon-cyan/[0.02] rounded-full blur-[100px]" />
+        <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-neon-purple/[0.02] rounded-full blur-[100px]" />
+      </div>
+      <div className="max-w-6xl mx-auto relative z-10">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="space-y-4">
+            <div className="bg-void-100/80 backdrop-blur-xl border border-white/[0.06] p-5" style={{ borderRadius: '2px' }}>
+              <h2 className="font-mono text-[10px] tracking-[0.2em] uppercase text-ink-400 mb-4">Camera Feed</h2>
               <CameraCapture 
                 onFrame={handleFrame}
                 fps={10}
