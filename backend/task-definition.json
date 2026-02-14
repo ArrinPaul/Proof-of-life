@@ -1,0 +1,59 @@
+{
+  "family": "proof-of-life-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "containerDefinitions": [
+    {
+      "name": "proof-of-life-backend",
+      "image": "YOUR_ECR_URI:latest",
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "CONVEX_URL",
+          "value": "https://keen-lion-797.convex.cloud"
+        },
+        {
+          "name": "JWT_ALGORITHM",
+          "value": "RS256"
+        },
+        {
+          "name": "JWT_EXPIRY_MINUTES",
+          "value": "15"
+        },
+        {
+          "name": "SESSION_TIMEOUT_SECONDS",
+          "value": "120"
+        },
+        {
+          "name": "MAX_FAILED_ATTEMPTS",
+          "value": "3"
+        },
+        {
+          "name": "USE_WSS",
+          "value": "true"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "JWT_SECRET_KEY",
+          "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:proof-of-life/jwt-secret"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/proof-of-life",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
