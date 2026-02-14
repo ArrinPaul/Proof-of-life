@@ -1,0 +1,4 @@
+# file: D:\TechX\backend\app\services\challenge_engine.py
+# hypothesis_version: 6.151.6
+
+['Blink your eyes', 'Close your eyes', 'Frown', 'Look angry', 'Look surprised', 'Nod your head down', 'Nod your head up', 'Open your mouth wide', 'Raise your eyebrows', 'Smile', 'angry', 'blink', 'close_eyes', 'frown', 'neutral', 'nod_down', 'nod_up', 'open_mouth', 'raise_eyebrows', 'smile', 'surprised', 'tilt_left', 'tilt_right', 'turn_left', 'turn_right']

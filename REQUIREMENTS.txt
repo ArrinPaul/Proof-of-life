@@ -1,0 +1,265 @@
+# ============================================================================
+# PROOF-OF-LIFE AUTHENTICATION SYSTEM - COMPLETE REQUIREMENTS
+# ============================================================================
+# This file contains ALL dependencies for the complete system
+# Organized by component for clarity
+# ============================================================================
+
+# ============================================================================
+# BACKEND DEPENDENCIES (Python 3.11 Required)
+# ============================================================================
+
+# --- Core Web Framework ---
+fastapi==0.109.0                    # Modern async web framework
+uvicorn[standard]==0.27.0           # ASGI server with WebSocket support
+python-multipart==0.0.6             # Form data parsing
+websockets==12.0                    # WebSocket protocol implementation
+
+# --- Computer Vision & ML Models ---
+opencv-python==4.9.0.80             # Image processing and video frame handling
+mediapipe==0.10.32                  # Google's ML framework for face landmarks
+tensorflow==2.20.0                  # Deep learning framework (requires Python 3.11)
+tf-keras==2.20.1                    # Keras API for TensorFlow 2.20+
+deepface==0.0.87                    # Facial recognition and emotion analysis
+numpy>=1.26.0                       # Numerical computing (auto-installed with above)
+
+# --- Security & Authentication ---
+pyjwt==2.8.0                        # JWT token generation and validation
+cryptography==42.0.2                # Cryptographic operations (RSA key generation)
+
+# --- Configuration & Environment ---
+python-dotenv==1.0.0                # Environment variable management
+
+# --- Testing Framework ---
+pytest==7.4.4                       # Testing framework
+pytest-asyncio==0.23.4              # Async test support
+pytest-mock==3.15.1                 # Mocking utilities
+hypothesis==6.98.0                  # Property-based testing
+httpx<0.28                          # HTTP client for testing (FastAPI TestClient)
+
+# --- Additional Dependencies (Auto-installed) ---
+# These are automatically installed as dependencies of the above packages:
+# - pydantic (data validation)
+# - starlette (ASGI framework used by FastAPI)
+# - pillow (image processing)
+# - scipy (scientific computing)
+# - pandas (data manipulation)
+# - gdown (Google Drive downloads for DeepFace models)
+
+# ============================================================================
+# FRONTEND DEPENDENCIES (Node.js 18+)
+# ============================================================================
+# Install via: npm install
+# See frontend/package.json for complete list
+
+# --- Core Framework ---
+# next@14.x                         # React framework with SSR
+# react@18.x                        # UI library
+# react-dom@18.x                    # React DOM rendering
+
+# --- Styling ---
+# tailwindcss@3.x                   # Utility-first CSS framework
+# postcss@8.x                       # CSS processing
+# autoprefixer@10.x                 # CSS vendor prefixing
+
+# --- TypeScript ---
+# typescript@5.x                    # Type safety
+# @types/node                       # Node.js type definitions
+# @types/react                      # React type definitions
+# @types/react-dom                  # React DOM type definitions
+
+# ============================================================================
+# SYSTEM REQUIREMENTS
+# ============================================================================
+
+# Python Version: 3.11.x (REQUIRED)
+# - TensorFlow 2.20.0 requires Python 3.11
+# - Earlier or later versions will not work
+
+# Node.js Version: 18.x or higher
+# - Required for Next.js 14
+
+# Operating System:
+# - Windows 10/11
+# - Linux (Ubuntu 20.04+, Debian 11+)
+# - macOS 11+
+
+# Hardware:
+# - CPU: Multi-core processor (4+ cores recommended)
+# - RAM: 8GB minimum, 16GB recommended
+# - Storage: 2GB free space for ML models
+# - Camera: Webcam or integrated camera for testing
+
+# ============================================================================
+# ML MODEL DOWNLOADS
+# ============================================================================
+
+# Models are automatically downloaded on first use or via scripts:
+# 1. MediaPipe FaceMesh (~3.58 MB)
+#    - Download: python backend/download_mediapipe_model.py
+#    - Location: ~/.mediapipe_models/face_landmarker.task
+
+# 2. DeepFace Models (~5.98 MB)
+#    - Download: Automatic on first use
+#    - Location: ~/.deepface/weights/
+
+# 3. MesoNet-4 Deepfake Detector (~0.15 MB)
+#    - Download: python backend/download_deepfake_model.py
+#    - Location: ~/.deepfake_models/mesonet4_weights.h5
+
+# ============================================================================
+# INSTALLATION INSTRUCTIONS
+# ============================================================================
+
+# --- Backend Setup ---
+# 1. Install Python 3.11:
+#    Windows: winget install Python.Python.3.11
+#    Linux: sudo apt install python3.11 python3.11-venv
+#    macOS: brew install python@3.11
+
+# 2. Create virtual environment:
+#    python3.11 -m venv venv311
+#    
+#    Activate:
+#    Windows: venv311\Scripts\activate
+#    Linux/Mac: source venv311/bin/activate
+
+# 3. Install dependencies:
+#    pip install -r requirements.txt
+
+# 4. Download ML models:
+#    python download_mediapipe_model.py
+#    python download_deepfake_model.py
+
+# 5. Run server:
+#    uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# --- Frontend Setup ---
+# 1. Install Node.js 18+:
+#    Windows: winget install OpenJS.NodeJS
+#    Linux: curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+#    macOS: brew install node@18
+
+# 2. Install dependencies:
+#    cd frontend
+#    npm install
+
+# 3. Configure environment:
+#    cp .env.local.example .env.local
+#    # Edit .env.local with backend URL
+
+# 4. Run development server:
+#    npm run dev
+
+# 5. Access application:
+#    http://localhost:3000
+
+# ============================================================================
+# PRODUCTION DEPLOYMENT
+# ============================================================================
+
+# Additional production dependencies:
+# - gunicorn (WSGI server for production)
+# - nginx (reverse proxy)
+# - supervisor (process management)
+# - redis (optional: session caching)
+# - postgresql (optional: production database)
+
+# Production installation:
+# pip install gunicorn supervisor
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+
+# Issue: TensorFlow installation fails
+# Solution: Ensure Python 3.11 is being used
+#   python --version  # Should show 3.11.x
+
+# Issue: httpx version conflict
+# Solution: Install specific version
+#   pip install "httpx<0.28"
+
+# Issue: pytest-mock not found
+# Solution: Install explicitly
+#   pip install pytest-mock==3.15.1
+
+# Issue: ML models not loading
+# Solution: Re-download models
+#   python download_mediapipe_model.py
+#   python download_deepfake_model.py
+
+# Issue: Camera not accessible in browser
+# Solution: Use HTTPS in production (required for camera API)
+
+# ============================================================================
+# DEVELOPMENT TOOLS (Optional)
+# ============================================================================
+
+# Code Quality:
+# black                             # Code formatter
+# flake8                            # Linter
+# mypy                              # Type checker
+# isort                             # Import sorter
+
+# Development:
+# ipython                           # Enhanced Python shell
+# jupyter                           # Notebook environment
+# watchdog                          # File system monitoring
+
+# ============================================================================
+# VERSION COMPATIBILITY MATRIX
+# ============================================================================
+
+# Python 3.11 + TensorFlow 2.20.0 + tf-keras 2.20.1 ✓
+# Python 3.12 + TensorFlow 2.20.0 ✗ (Not compatible)
+# Python 3.10 + TensorFlow 2.20.0 ✗ (Not compatible)
+
+# FastAPI 0.109.0 + httpx <0.28 ✓
+# FastAPI 0.109.0 + httpx >=0.28 ✗ (Breaking changes)
+
+# Next.js 14 + React 18 ✓
+# Next.js 13 + React 18 ✓ (Compatible but not recommended)
+
+# ============================================================================
+# SECURITY NOTES
+# ============================================================================
+
+# 1. Keep dependencies updated for security patches
+# 2. Use virtual environments to isolate dependencies
+# 3. Never commit .env files with secrets
+# 4. Rotate JWT signing keys regularly in production
+# 5. Use HTTPS/WSS in production environments
+# 6. Implement rate limiting for API endpoints
+# 7. Monitor for CVEs in dependencies
+
+# ============================================================================
+# PERFORMANCE OPTIMIZATION
+# ============================================================================
+
+# For production performance:
+# 1. Use tensorflow-cpu if GPU not available (smaller install)
+# 2. Enable model caching to reduce load times
+# 3. Use connection pooling for database
+# 4. Implement Redis for session caching
+# 5. Use CDN for frontend static assets
+# 6. Enable gzip compression
+# 7. Optimize ML model inference with batching
+
+# ============================================================================
+# LICENSE INFORMATION
+# ============================================================================
+
+# This project uses the following open-source libraries:
+# - FastAPI: MIT License
+# - MediaPipe: Apache 2.0 License
+# - DeepFace: MIT License
+# - TensorFlow: Apache 2.0 License
+# - Next.js: MIT License
+# - React: MIT License
+
+# Ensure compliance with all license terms when deploying.
+
+# ============================================================================
+# END OF REQUIREMENTS
+# ============================================================================
