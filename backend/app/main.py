@@ -1134,10 +1134,25 @@ async def _send_feedback(
     )
     
     # Convert to JSON-serializable format
+    # Recursively convert numpy float32/int types to Python native types
+    import numpy as _np
+    def _jsonify(obj):
+        if isinstance(obj, dict):
+            return {k: _jsonify(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_jsonify(v) for v in obj]
+        if isinstance(obj, (_np.floating, _np.float32, _np.float64)):
+            return float(obj)
+        if isinstance(obj, (_np.integer, _np.int32, _np.int64)):
+            return int(obj)
+        if isinstance(obj, _np.ndarray):
+            return obj.tolist()
+        return obj
+
     feedback_dict = {
         "type": feedback.type.value,
         "message": feedback.message,
-        "data": feedback.data
+        "data": _jsonify(feedback.data)
     }
     
     await websocket.send_json(feedback_dict)
