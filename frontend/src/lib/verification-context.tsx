@@ -14,6 +14,7 @@ interface VerificationContextType {
   updateStatus: (status: SessionStatus) => void
   addFeedback: (feedback: VerificationFeedback) => void
   setToken: (token: VerificationToken) => void
+  setTotalChallenges: (total: number) => void
   reset: () => void
 }
 
@@ -73,6 +74,10 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
     setTokenState(newToken)
   }, [])
 
+  const setTotalChallenges = useCallback((total: number) => {
+    setSessionState(prev => ({ ...prev, totalChallenges: total }))
+  }, [])
+
   const reset = useCallback(() => {
     setSessionState(initialState)
     setFeedback([])
@@ -92,6 +97,7 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
         updateStatus,
         addFeedback,
         setToken,
+        setTotalChallenges,
         reset
       }}
     >

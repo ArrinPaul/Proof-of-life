@@ -28,7 +28,8 @@ from app.services import (
     ScoringEngine,
     TokenIssuer,
     EmotionAnalyzer,
-    DeepfakeDetector
+    DeepfakeDetector,
+    BlockchainLedger
 )
 
 # Import data models
@@ -93,6 +94,14 @@ emotion_analyzer = EmotionAnalyzer()
 # Initialize Deepfake Detector
 deepfake_model_path = os.getenv("DEEPFAKE_MODEL_PATH", None)
 deepfake_detector = DeepfakeDetector(model_path=deepfake_model_path)
+
+# Initialize Blockchain Verification Ledger (Decentralized audit trail)
+blockchain_ledger = BlockchainLedger(
+    private_key=private_key,
+    public_key=public_key,
+    storage_dir=os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+)
+logger.info(f"Blockchain ledger initialized: {blockchain_ledger.get_chain_stats()['total_blocks']} blocks")
 
 # Clerk JWT verification cache
 _clerk_jwks_client = None
@@ -275,11 +284,17 @@ async def health_check():
     """Health check endpoint for monitoring"""
     try:
         # Basic health check - can be extended to check database, ML models, etc.
+        chain_stats = blockchain_ledger.get_chain_stats()
         return {
             "status": "healthy",
             "services": {
                 "api": "operational",
-                "database": "operational"
+                "database": "operational",
+                "blockchain_ledger": "operational"
+            },
+            "blockchain": {
+                "total_blocks": chain_stats["total_blocks"],
+                "chain_hash": chain_stats["chain_hash"]
             }
         }
     except Exception as e:
@@ -542,8 +557,35 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                 {
                     "challenge_id": challenge.challenge_id,
                     "instruction": challenge.instruction,
-                    "timeout_seconds": challenge.timeout_seconds
+                    "timeout_seconds": challenge.timeout_seconds,
+                    "challenge_number": challenge_sequence.challenges.index(challenge) + 1,
+                    "total_challenges": len(challenge_sequence.challenges)
                 }
+            )
+            
+            # Give the user 3 seconds to read the challenge before collecting
+            await _send_feedback(
+                websocket,
+                FeedbackType.SCORE_UPDATE,
+                "Get ready...",
+                {"countdown": 3, "status": "preparing"}
+            )
+            
+            # Drain any frames sent during the countdown so they don't count
+            countdown_end = time.time() + 3.0
+            while time.time() < countdown_end:
+                try:
+                    data = await asyncio.wait_for(websocket.receive_text(), timeout=0.1)
+                    # Discard frames during countdown
+                except (asyncio.TimeoutError, Exception):
+                    pass
+                await asyncio.sleep(0.05)
+            
+            await _send_feedback(
+                websocket,
+                FeedbackType.SCORE_UPDATE,
+                "Go! Perform the action now.",
+                {"status": "recording"}
             )
             
             # Collect video frames for this challenge
@@ -615,8 +657,8 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                                 if len(challenge_frames) == 1:
                                     logger.info(f"First frame decoded: shape={frame.shape}, dtype={frame.dtype}")
                                 
-                                # Collect frames for ~2 seconds (at 30 FPS = 60 frames)
-                                if len(challenge_frames) >= 60:
+                                # Collect frames for ~5 seconds (at 30 FPS = 150 frames)
+                                if len(challenge_frames) >= 150:
                                     break
                             else:
                                 if len(challenge_frames) == 0:
@@ -672,7 +714,7 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                     await _send_feedback(
                         websocket,
                         FeedbackType.CHALLENGE_COMPLETED,
-                        f"Challenge completed successfully!",
+                        f"Challenge completed successfully! ({completed_count}/{len(challenge_sequence.challenges)})",
                         {
                             "challenge_id": challenge.challenge_id,
                             "confidence": challenge_result.confidence,
@@ -684,12 +726,31 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                     await _send_feedback(
                         websocket,
                         FeedbackType.CHALLENGE_FAILED,
-                        f"Challenge failed. Please try the next one.",
+                        f"Challenge not detected. Moving to next one.",
                         {
                             "challenge_id": challenge.challenge_id,
-                            "confidence": challenge_result.confidence
+                            "confidence": challenge_result.confidence,
+                            "completed_count": completed_count,
+                            "total_challenges": len(challenge_sequence.challenges)
                         }
                     )
+                
+                # Send live progress score after each challenge
+                progress_score = completed_count / len(challenge_sequence.challenges)
+                await _send_feedback(
+                    websocket,
+                    FeedbackType.SCORE_UPDATE,
+                    f"Progress: {completed_count}/{len(challenge_sequence.challenges)} challenges passed",
+                    {
+                        "liveness_score": progress_score,
+                        "completed_count": completed_count,
+                        "total_challenges": len(challenge_sequence.challenges),
+                        "last_confidence": challenge_result.confidence
+                    }
+                )
+                
+                # Brief pause between challenges so user can see result
+                await asyncio.sleep(1.5)
             else:
                 # No frames received - mark as failed
                 challenge_result = ChallengeResult(
@@ -727,7 +788,7 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                 )
         
         # Check if minimum challenges completed (Requirement 4.5)
-        min_required = 3
+        min_required = 4
         if completed_count < min_required:
             session_manager.terminate_session(session_id, "failed")
             await _send_feedback(
@@ -825,6 +886,22 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
             scoring_result=scoring_result
         )
         
+        # Record verification result on blockchain ledger (Decentralized audit)
+        try:
+            verification_block = blockchain_ledger.add_verification_block(
+                session_id=session_id,
+                user_id=session_data['user_id'],
+                verification_score=scoring_result.final_score,
+                liveness_score=scoring_result.liveness_score,
+                emotion_score=scoring_result.emotion_score,
+                deepfake_score=scoring_result.deepfake_score,
+                passed=scoring_result.passed,
+                metadata={"result_id": result_id}
+            )
+            logger.info(f"Verification recorded on blockchain: block #{verification_block.index}")
+        except Exception as e:
+            logger.error(f"Failed to record verification on blockchain: {e}")
+        
         # Log verification result with all scores (Requirement 13.2)
         log_id = str(uuid.uuid4())
         database_service.save_audit_log(
@@ -868,6 +945,19 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                 expires_at=expires_at
             )
             
+            # Record token issuance on blockchain ledger
+            try:
+                blockchain_ledger.add_token_block(
+                    session_id=session_id,
+                    user_id=session_data['user_id'],
+                    token_id=token_id,
+                    issued_at=issued_at,
+                    expires_at=expires_at,
+                    verification_score=scoring_result.final_score
+                )
+            except Exception as e:
+                logger.error(f"Failed to record token on blockchain: {e}")
+            
             # Log token issuance event (Requirement 13.3, 13.4)
             log_id = str(uuid.uuid4())
             database_service.save_audit_log(
@@ -901,7 +991,12 @@ async def websocket_verify_endpoint(websocket: WebSocket, session_id: str):
                     "liveness_score": scoring_result.liveness_score,
                     "emotion_score": scoring_result.emotion_score,
                     "deepfake_score": scoring_result.deepfake_score,
-                    "expires_in_minutes": token_issuer.TOKEN_EXPIRY_MINUTES
+                    "expires_in_minutes": token_issuer.TOKEN_EXPIRY_MINUTES,
+                    "blockchain": {
+                        "block_count": blockchain_ledger.get_chain_stats()["total_blocks"],
+                        "chain_hash": blockchain_ledger.get_chain_stats()["chain_hash"],
+                        "ledger_url": "/blockchain"
+                    }
                 }
             )
             
@@ -1068,6 +1163,122 @@ async def validate_token_endpoint(request: Request):
                 }
             }
         )
+
+
+# ======================================================================
+# Blockchain Ledger API — Decentralized Verification Audit Trail
+# ======================================================================
+
+@app.get("/api/blockchain/stats")
+async def blockchain_stats():
+    """Get blockchain ledger statistics."""
+    stats = blockchain_ledger.get_chain_stats()
+    return JSONResponse(status_code=200, content=stats)
+
+
+@app.get("/api/blockchain/chain")
+async def blockchain_chain(limit: int = 50, offset: int = 0):
+    """
+    Get the blockchain verification ledger.
+    
+    Returns blocks in reverse chronological order (newest first).
+    """
+    chain = blockchain_ledger.get_chain()
+    total = len(chain)
+    # Reverse for newest-first, then paginate
+    reversed_chain = list(reversed(chain))
+    paginated = reversed_chain[offset : offset + limit]
+    return JSONResponse(
+        status_code=200,
+        content={
+            "blocks": paginated,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+        },
+    )
+
+
+@app.get("/api/blockchain/block/{block_index}")
+async def blockchain_block(block_index: int):
+    """Get a specific block by index."""
+    block = blockchain_ledger.get_block(block_index)
+    if block is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Block not found"},
+        )
+    return JSONResponse(status_code=200, content=block)
+
+
+@app.get("/api/blockchain/verify")
+async def blockchain_verify():
+    """
+    Verify the entire blockchain integrity.
+    
+    Checks hash linkage, block hashes, and RSA signatures.
+    Returns whether the chain is valid and any errors found.
+    """
+    result = blockchain_ledger.verify_chain_integrity()
+    status = 200 if result["valid"] else 409
+    return JSONResponse(status_code=status, content=result)
+
+
+@app.get("/api/blockchain/verify/{block_index}")
+async def blockchain_verify_block(block_index: int):
+    """Verify a single block's integrity, hash, and signature."""
+    result = blockchain_ledger.verify_single_block(block_index)
+    if "error" in result:
+        return JSONResponse(status_code=404, content=result)
+    status = 200 if result["valid"] else 409
+    return JSONResponse(status_code=status, content=result)
+
+
+@app.get("/api/blockchain/proof/{block_index}")
+async def blockchain_proof(block_index: int):
+    """
+    Generate a standalone cryptographic proof for a block.
+    
+    This proof can be independently verified by anyone with the
+    public key — enabling decentralized, peer-to-peer validation
+    without needing access to the full chain or the server.
+    """
+    proof = blockchain_ledger.generate_proof(block_index)
+    if proof is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Block not found"},
+        )
+    return JSONResponse(status_code=200, content=proof)
+
+
+@app.get("/api/blockchain/session/{session_id}")
+async def blockchain_session_blocks(session_id: str):
+    """Get all blockchain blocks related to a specific session."""
+    blocks = blockchain_ledger.get_blocks_by_session(session_id)
+    return JSONResponse(
+        status_code=200,
+        content={"session_id": session_id, "blocks": blocks, "count": len(blocks)},
+    )
+
+
+@app.get("/api/blockchain/public-key")
+async def blockchain_public_key():
+    """
+    Export the ledger's public key for independent verification.
+    
+    Third parties can use this key to verify block signatures
+    without trusting the server — true decentralized validation.
+    """
+    return JSONResponse(
+        status_code=200,
+        content={
+            "public_key": blockchain_ledger.get_public_key_pem(),
+            "algorithm": "RSA-PSS with SHA-256",
+            "key_size": 2048,
+            "usage": "Verify block signatures in the verification ledger",
+        },
+    )
 
 
 def _decode_frame(frame_data: str) -> Optional[np.ndarray]:

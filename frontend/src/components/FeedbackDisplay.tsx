@@ -6,11 +6,15 @@ import { motion } from 'framer-motion'
 interface FeedbackDisplayProps {
   feedback: VerificationFeedback[]
   currentScore?: number
+  completedCount?: number
+  totalChallenges?: number
 }
 
 export default function FeedbackDisplay({ 
   feedback, 
-  currentScore = 0 
+  currentScore = 0,
+  completedCount = 0,
+  totalChallenges = 0
 }: FeedbackDisplayProps) {
   const latestFeedback = feedback[feedback.length - 1]
 
@@ -52,6 +56,35 @@ export default function FeedbackDisplay({
 
   return (
     <div className="space-y-4">
+      {/* Challenge Progress */}
+      {totalChallenges > 0 && (
+        <div className="bg-void-200/80 border border-neon-cyan/20 p-5" style={{ borderRadius: '2px' }}>
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[10px] font-mono tracking-[0.2em] uppercase text-ink-400">Challenge Progress</span>
+            <span className="font-mono text-lg font-bold text-neon-cyan">{completedCount}/{totalChallenges}</span>
+          </div>
+          <div className="flex gap-1.5">
+            {Array.from({ length: totalChallenges }, (_, i) => (
+              <div
+                key={i}
+                className={`h-2 flex-1 transition-all duration-300 ${
+                  i < completedCount 
+                    ? 'bg-neon-green shadow-[0_0_6px_rgba(0,255,136,0.4)]' 
+                    : 'bg-white/[0.06]'
+                }`}
+                style={{ borderRadius: '1px' }}
+              />
+            ))}
+          </div>
+          <p className="text-[10px] font-mono text-ink-500 mt-2">
+            {completedCount >= Math.ceil(totalChallenges / 2) 
+              ? `✓ Minimum threshold reached (${Math.ceil(totalChallenges / 2)} required)`
+              : `Need ${Math.ceil(totalChallenges / 2) - completedCount} more to pass`
+            }
+          </p>
+        </div>
+      )}
+
       {/* Score Display */}
       <div className="bg-void-200/80 border border-white/[0.06] p-5" style={{ borderRadius: '2px' }}>
         <div className="flex items-center justify-between mb-3">

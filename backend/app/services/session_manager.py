@@ -17,8 +17,8 @@ from app.services.database_service import DatabaseService
 class SessionManager:
     """Manages verification sessions with timeout and failure tracking"""
     
-    MAX_SESSION_DURATION_SECONDS = 120  # 2 minutes
-    MAX_CONSECUTIVE_FAILURES = 3
+    MAX_SESSION_DURATION_SECONDS = 300  # 5 minutes
+    MAX_CONSECUTIVE_FAILURES = 8
     CHALLENGE_TIMEOUT_SECONDS = 10
     
     def __init__(self, database_service: DatabaseService):

@@ -7,6 +7,7 @@ import { motion } from 'framer-motion'
 interface ChallengeDisplayProps {
   challenge: Challenge | null
   timeRemaining?: number
+  status?: string
 }
 
 const challengeIcons: Record<string, string> = {
@@ -29,7 +30,8 @@ const challengeIcons: Record<string, string> = {
 
 export default function ChallengeDisplay({ 
   challenge, 
-  timeRemaining = 10 
+  timeRemaining = 20,
+  status = ''
 }: ChallengeDisplayProps) {
   const [progress, setProgress] = useState(100)
 
@@ -70,6 +72,31 @@ export default function ChallengeDisplay({
         <p className="text-ink-400 font-mono text-xs tracking-[0.2em] uppercase">
           {challenge.type === 'gesture' ? 'Perform gesture' : 'Show expression'}
         </p>
+        {/* Status indicator */}
+        {status === 'get-ready' && (
+          <motion.div 
+            className="mt-4 py-2 px-4 bg-neon-amber/[0.1] border border-neon-amber/30 inline-block"
+            style={{ borderRadius: '2px' }}
+            animate={{ opacity: [0.6, 1, 0.6] }}
+            transition={{ duration: 1, repeat: Infinity }}
+          >
+            <span className="font-mono text-sm tracking-[0.2em] uppercase text-neon-amber font-bold">
+              Get Ready...
+            </span>
+          </motion.div>
+        )}
+        {status === 'recording' && (
+          <motion.div 
+            className="mt-4 py-2 px-4 bg-neon-green/[0.1] border border-neon-green/30 inline-block"
+            style={{ borderRadius: '2px' }}
+            initial={{ scale: 1.2, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+          >
+            <span className="font-mono text-sm tracking-[0.2em] uppercase text-neon-green font-bold">
+              ● Recording — Do it now!
+            </span>
+          </motion.div>
+        )}
       </div>
 
       <div className="relative w-full h-px bg-white/[0.06] overflow-hidden">

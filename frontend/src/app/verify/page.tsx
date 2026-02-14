@@ -25,13 +25,15 @@ function VerificationContent() {
     updateStatus,
     addFeedback,
     setToken,
+    setTotalChallenges,
     reset
   } = useVerification()
 
   const [wsClient, setWsClient] = useState<WebSocketClient | null>(null)
-  const [timeRemaining, setTimeRemaining] = useState(10)
+  const [timeRemaining, setTimeRemaining] = useState(20)
   const [isStarting, setIsStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [challengeStatus, setChallengeStatus] = useState<string>('')
 
   const handleWebSocketMessage = useCallback((data: any) => {
     console.log('WebSocket message:', data)
@@ -41,13 +43,17 @@ function VerificationContent() {
         challengeId: data.data?.challenge_id || '',
         type: data.data?.type || 'gesture',
         instruction: data.data?.instruction || data.message || '',
-        timeoutSeconds: data.data?.timeout_seconds || 10
+        timeoutSeconds: data.data?.timeout_seconds || 20
       }
       updateChallenge(challenge)
       setTimeRemaining(challenge.timeoutSeconds)
+      setChallengeStatus('get-ready')
+      const challengeNum = data.data?.challenge_number || ''
+      const totalNum = data.data?.total_challenges || ''
+      if (totalNum) setTotalChallenges(totalNum)
       addFeedback({
         type: 'challenge_issued',
-        message: `New challenge: ${challenge.instruction}`,
+        message: `Challenge ${challengeNum}/${totalNum}: ${challenge.instruction}`,
         data: { challenge }
       })
     } else if (data.type === 'challenge_completed') {
@@ -65,11 +71,19 @@ function VerificationContent() {
     } else if (data.type === 'score_update') {
       const score = data.data?.liveness_score || 0
       updateScore(score)
-      addFeedback({
-        type: 'score_update',
-        message: `Score updated: ${(score * 100).toFixed(0)}%`,
-        data: { score }
-      })
+      // Handle status messages (get ready / go)
+      if (data.data?.status === 'preparing') {
+        setChallengeStatus('get-ready')
+      } else if (data.data?.status === 'recording') {
+        setChallengeStatus('recording')
+      }
+      if (data.data?.completed_count !== undefined) {
+        addFeedback({
+          type: 'score_update',
+          message: data.message || `Progress: ${(score * 100).toFixed(0)}%`,
+          data: { score, completed_count: data.data.completed_count, total_challenges: data.data.total_challenges }
+        })
+      }
     } else if (data.type === 'verification_success') {
       updateStatus('completed')
       setToken({
@@ -96,7 +110,7 @@ function VerificationContent() {
         message: data.message
       })
     }
-  }, [updateChallenge, incrementCompleted, updateScore, updateStatus, addFeedback, setToken])
+  }, [updateChallenge, incrementCompleted, updateScore, updateStatus, addFeedback, setToken, setTotalChallenges])
 
   const startVerification = async () => {
     try {
@@ -232,12 +246,20 @@ function VerificationContent() {
                 {token.token.substring(0, 50)}...
               </code>
             </div>
-            <button
-              onClick={() => router.push('/profile')}
-              className="px-6 py-3 font-mono text-sm tracking-[0.15em] uppercase bg-neon-cyan text-void-50 font-bold clip-corner shadow-glow-cyan"
-            >
-              Go to Profile
-            </button>
+            <div className="flex gap-3 justify-center">
+              <button
+                onClick={() => router.push('/profile')}
+                className="px-6 py-3 font-mono text-sm tracking-[0.15em] uppercase bg-neon-cyan text-void-50 font-bold clip-corner shadow-glow-cyan"
+              >
+                Go to Profile
+              </button>
+              <button
+                onClick={() => router.push('/blockchain')}
+                className="px-6 py-3 font-mono text-sm tracking-[0.15em] uppercase border border-neon-purple/30 text-neon-purple clip-corner hover:bg-neon-purple/[0.05] transition-colors"
+              >
+                View Ledger
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -303,7 +325,7 @@ function VerificationContent() {
                 </li>
                 <li className="flex items-start gap-3">
                   <span className="text-neon-cyan text-xs mt-0.5">02</span>
-                  <span>Complete 3 gesture &amp; expression challenges</span>
+                  <span>Complete 8 gesture &amp; expression challenges</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <span className="text-neon-cyan text-xs mt-0.5">03</span>
@@ -311,7 +333,7 @@ function VerificationContent() {
                 </li>
                 <li className="flex items-start gap-3">
                   <span className="text-neon-cyan text-xs mt-0.5">04</span>
-                  <span>10-second timeout per challenge</span>
+                  <span>20-second window per challenge with 3s prep time</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <span className="text-neon-cyan text-xs mt-0.5">05</span>
@@ -352,12 +374,15 @@ function VerificationContent() {
             <ChallengeDisplay 
               challenge={sessionState.currentChallenge}
               timeRemaining={timeRemaining}
+              status={challengeStatus}
             />
           </div>
           <div>
             <FeedbackDisplay 
               feedback={feedback}
               currentScore={sessionState.currentScore}
+              completedCount={sessionState.completedChallenges}
+              totalChallenges={sessionState.totalChallenges}
             />
           </div>
         </div>
